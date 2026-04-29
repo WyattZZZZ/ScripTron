@@ -4,7 +4,7 @@ use auth::{all_provider_statuses, AppConfig, Credentials, Provider, ProviderStat
 use cli_registry::ToolManifest;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use tauri::State;
+use tauri::{Emitter, State};
 use tokio::sync::mpsc;
 use tron_parser::{TronCell, TronFile};
 

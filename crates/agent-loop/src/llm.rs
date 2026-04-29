@@ -40,21 +40,6 @@ pub trait LlmProvider {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-/// Scan backward through history to find the tool name for a given tool_use_id.
-fn tool_name_for_id<'a>(messages: &'a [ChatMessage], id: &str) -> Option<&'a str> {
-    for msg in messages.iter().rev() {
-        if msg.role == "assistant" {
-            if let Some(blocks) = msg.content.as_array() {
-                for b in blocks {
-                    if b["type"] == "tool_use" && b["id"].as_str() == Some(id) {
-                        return b["name"].as_str();
-                    }
-                }
-            }
-        }
-    }
-    None
-}
 
 // ── Anthropic provider ────────────────────────────────────────────────────────
 
@@ -200,7 +185,7 @@ impl LlmProvider for GeminiProvider {
         }
 
         let json: serde_json::Value = serde_json::from_str(&text).map_err(|e| e.to_string())?;
-        parse_gemini_response(&json, messages)
+        parse_gemini_response(&json)
     }
 }
 
@@ -279,17 +264,11 @@ fn convert_tools_to_gemini(tools: &[serde_json::Value]) -> Vec<serde_json::Value
         .collect()
 }
 
-fn parse_gemini_response(
-    json: &serde_json::Value,
-    messages: &[ChatMessage],
-) -> Result<LlmResponse, String> {
+fn parse_gemini_response(json: &serde_json::Value) -> Result<LlmResponse, String> {
     let candidate = json["candidates"]
         .as_array()
         .and_then(|a| a.first())
         .ok_or("Gemini returned no candidates")?;
-
-    let finish = candidate["finishReason"].as_str().unwrap_or("STOP");
-    let stop_reason = if finish == "STOP" { "end_turn" } else { "tool_use" };
 
     let parts = candidate["content"]["parts"]
         .as_array()

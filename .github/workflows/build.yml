@@ -29,16 +29,15 @@ jobs:
         run: |
           mkdir -p src-tauri/icons
           python3 -c "
-          import struct, zlib
+          import struct, zlib, shutil
           def png(w,h,r,g,b):
-              raw=b''.join(b'\x00'+bytes([r,g,b]*w) for _ in range(h))
+              raw=b''.join(b'\x00'+bytes([r,g,b,255]*w) for _ in range(h))
               def chunk(t,d):
                   c=zlib.crc32(t+d)&0xffffffff
                   return struct.pack('>I',len(d))+t+d+struct.pack('>I',c)
-              return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',w,h,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(raw))+chunk(b'IEND',b'')
+              return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',w,h,8,6,0,0,0))+chunk(b'IDAT',zlib.compress(raw))+chunk(b'IEND',b'')
           for name,w,h in [('32x32.png',32,32),('128x128.png',128,128),('128x128@2x.png',256,256)]:
               open(f'src-tauri/icons/{name}','wb').write(png(w,h,0x4a,0x3a,0xff))
-          import shutil
           shutil.copy('src-tauri/icons/32x32.png','src-tauri/icons/icon.ico')
           shutil.copy('src-tauri/icons/128x128.png','src-tauri/icons/icon.icns')
           "
@@ -87,11 +86,11 @@ jobs:
           python3 -c "
           import struct, zlib, shutil
           def png(w,h,r,g,b):
-              raw=b''.join(b'\x00'+bytes([r,g,b]*w) for _ in range(h))
+              raw=b''.join(b'\x00'+bytes([r,g,b,255]*w) for _ in range(h))
               def chunk(t,d):
                   c=zlib.crc32(t+d)&0xffffffff
                   return struct.pack('>I',len(d))+t+d+struct.pack('>I',c)
-              return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',w,h,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(raw))+chunk(b'IEND',b'')
+              return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',w,h,8,6,0,0,0))+chunk(b'IDAT',zlib.compress(raw))+chunk(b'IEND',b'')
           for name,w,h in [('32x32.png',32,32),('128x128.png',128,128),('128x128@2x.png',256,256)]:
               open(f'src-tauri/icons/{name}','wb').write(png(w,h,0x4a,0x3a,0xff))
           shutil.copy('src-tauri/icons/32x32.png','src-tauri/icons/icon.ico')

@@ -5,7 +5,6 @@ mod commands;
 mod state;
 
 use state::AppState;
-use tauri::Manager;
 
 #[tokio::main]
 async fn main() {
