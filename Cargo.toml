@@ -1,0 +1,20 @@
+[workspace]
+members = [
+    "src-tauri",
+    "crates/tron-parser",
+    "crates/cli-registry",
+    "crates/process-runner",
+    "crates/agent-loop",
+    "crates/auth",
+]
+resolver = "2"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "stream"] }
+uuid = { version = "1", features = ["v4"] }
+chrono = { version = "0.4", features = ["serde"] }

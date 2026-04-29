@@ -1,0 +1,113 @@
+name: Build ScripTron
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install npm deps
+        run: npm install
+
+      - name: Generate placeholder icons
+        run: |
+          mkdir -p src-tauri/icons
+          python3 -c "
+          import struct, zlib
+          def png(w,h,r,g,b):
+              raw=b''.join(b'\x00'+bytes([r,g,b]*w) for _ in range(h))
+              def chunk(t,d):
+                  c=zlib.crc32(t+d)&0xffffffff
+                  return struct.pack('>I',len(d))+t+d+struct.pack('>I',c)
+              return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',w,h,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(raw))+chunk(b'IEND',b'')
+          for name,w,h in [('32x32.png',32,32),('128x128.png',128,128),('128x128@2x.png',256,256)]:
+              open(f'src-tauri/icons/{name}','wb').write(png(w,h,0x4a,0x3a,0xff))
+          import shutil
+          shutil.copy('src-tauri/icons/32x32.png','src-tauri/icons/icon.ico')
+          shutil.copy('src-tauri/icons/128x128.png','src-tauri/icons/icon.icns')
+          "
+
+      - name: Build universal macOS
+        run: npm run build -- --target universal-apple-darwin
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ''
+
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: ScripTron-macos-universal
+          path: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+          retention-days: 30
+
+  build-linux:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Linux deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install npm deps
+        run: npm install
+
+      - name: Generate placeholder icons
+        run: |
+          mkdir -p src-tauri/icons
+          python3 -c "
+          import struct, zlib, shutil
+          def png(w,h,r,g,b):
+              raw=b''.join(b'\x00'+bytes([r,g,b]*w) for _ in range(h))
+              def chunk(t,d):
+                  c=zlib.crc32(t+d)&0xffffffff
+                  return struct.pack('>I',len(d))+t+d+struct.pack('>I',c)
+              return b'\x89PNG\r\n\x1a\n'+chunk(b'IHDR',struct.pack('>IIBBBBB',w,h,8,2,0,0,0))+chunk(b'IDAT',zlib.compress(raw))+chunk(b'IEND',b'')
+          for name,w,h in [('32x32.png',32,32),('128x128.png',128,128),('128x128@2x.png',256,256)]:
+              open(f'src-tauri/icons/{name}','wb').write(png(w,h,0x4a,0x3a,0xff))
+          shutil.copy('src-tauri/icons/32x32.png','src-tauri/icons/icon.ico')
+          shutil.copy('src-tauri/icons/128x128.png','src-tauri/icons/icon.icns')
+          "
+
+      - name: Build Linux
+        run: npm run build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ''
+
+      - name: Upload Linux bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: ScripTron-linux
+          path: |
+            src-tauri/target/release/bundle/appimage/*.AppImage
+            src-tauri/target/release/bundle/deb/*.deb
+          retention-days: 30

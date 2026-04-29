@@ -1,0 +1,8 @@
+/target
+/node_modules
+/.env
+*.lock
+src-tauri/target
+ui/dist
+.DS_Store
+*.tsbuildinfo

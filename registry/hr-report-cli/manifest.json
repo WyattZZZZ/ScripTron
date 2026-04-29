@@ -1,0 +1,46 @@
+{
+  "name": "hr-report-cli",
+  "description": "Generate HR reports, summarise employee data from CSV files, and produce formatted output in PDF or Markdown.",
+  "version": "0.8.0",
+  "command": "hr-report-cli",
+  "author": "ScripTron Community",
+  "homepage": "https://github.com/scriptron/hr-report-cli",
+  "args_schema": [
+    {
+      "name": "action",
+      "description": "Action to perform: generate | summarise | diff | onboarding",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "name": "input",
+      "description": "Input CSV file or directory of employee files",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "name": "output",
+      "description": "Output file path",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "name": "format",
+      "description": "Output format: pdf | csv | markdown | html (default: pdf)",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "name": "month",
+      "description": "Month for the report (YYYY-MM format)",
+      "required": false,
+      "type": "string"
+    }
+  ],
+  "examples": [
+    "hr-report-cli generate new_employees/ --output onboarding_report.pdf --month 2024-04",
+    "hr-report-cli summarise employees.csv --format markdown --output summary.md",
+    "hr-report-cli diff employees_jan.csv employees_feb.csv --output changes.pdf",
+    "hr-report-cli onboarding john_doe.txt --format pdf --output john_doe_onboarding.pdf"
+  ]
+}

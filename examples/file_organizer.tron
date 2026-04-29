@@ -1,0 +1,35 @@
+---run: false---
+## Downloads Organiser
+
+Automatically sorts the Downloads folder into categorised subdirectories.
+
+Safe to run regularly — it will not overwrite existing organised files.
+---
+
+---run: true---
+Look at the Downloads folder and list all the files. Group them mentally by type:
+- Documents: .pdf, .doc, .docx, .txt, .md
+- Spreadsheets: .xlsx, .csv, .numbers
+- Images: .png, .jpg, .jpeg, .gif, .webp, .heic
+- Archives: .zip, .tar, .gz, .7z
+- Code: .js, .py, .rs, .ts, .html, .css
+- Everything else: Miscellaneous
+---
+
+---run: true---
+Create the following folders inside Downloads if they do not already exist:
+Documents, Spreadsheets, Images, Archives, Code, Miscellaneous
+---
+
+---run: true---
+Move each file from Downloads into the appropriate subfolder based on its extension.
+Do not move files that are already inside a subfolder.
+After moving, list the contents of each subfolder so I can verify everything looks correct.
+---
+
+---run: false---
+## Customisation tips
+
+Add or change extensions by editing the groupings in the first run cell.
+You can also change the destination folder names to suit your workflow.
+---

@@ -1,0 +1,13 @@
+{
+  "name": "scriptron",
+  "version": "0.1.0",
+  "description": "Natural language automation for non-technical users",
+  "scripts": {
+    "tauri": "tauri",
+    "dev": "tauri dev",
+    "build": "tauri build"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

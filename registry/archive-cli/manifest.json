@@ -1,0 +1,54 @@
+{
+  "name": "archive-cli",
+  "description": "Organise, archive, and clean up files according to rules you define. Safe by default — moves files rather than deleting them.",
+  "version": "1.1.0",
+  "command": "archive-cli",
+  "author": "ScripTron Community",
+  "homepage": "https://github.com/scriptron/archive-cli",
+  "args_schema": [
+    {
+      "name": "action",
+      "description": "Action to perform: archive | organise | cleanup | restore | zip",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "name": "source",
+      "description": "Source directory or file path",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "name": "dest",
+      "description": "Destination directory (for archive/organise/restore)",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "name": "rules",
+      "description": "Path to JSON rules file that defines organise/cleanup behaviour",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "name": "dry-run",
+      "description": "Preview changes without making them (true/false)",
+      "required": false,
+      "type": "boolean"
+    },
+    {
+      "name": "older-than",
+      "description": "Only affect files older than N days (for cleanup)",
+      "required": false,
+      "type": "number"
+    }
+  ],
+  "examples": [
+    "archive-cli organise ./Downloads --dest ./Sorted",
+    "archive-cli archive ./old_projects --dest ./Archives/2024",
+    "archive-cli cleanup ./temp --older-than 30",
+    "archive-cli cleanup ./Downloads --rules cleanup_rules.json --dry-run true",
+    "archive-cli zip ./project_files --dest ./backups/project_2024-04.zip",
+    "archive-cli restore ./Archives/2024 --dest ./Restored"
+  ]
+}
