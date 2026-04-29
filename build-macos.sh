@@ -19,4 +19,4 @@ npm run build -- --target universal-apple-darwin
 
 echo ""
 echo "Done! Your installer is at:"
-echo "  src-tauri/target/universal-apple-darwin/release/bundle/dmg/ScripTron_0.1.0_universal.dmg"
+echo "  target/universal-apple-darwin/release/bundle/dmg/ScripTron_0.1.0_universal.dmg"
