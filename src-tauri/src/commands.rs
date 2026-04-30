@@ -14,6 +14,7 @@ use tron_parser::{TronCell, TronFile};
 pub struct TronFileDto {
     pub path: String,
     pub cells: Vec<TronCell>,
+    pub blackboard: serde_json::Value,
 }
 
 #[tauri::command]
@@ -22,22 +23,34 @@ pub async fn open_tron_file(path: String) -> Result<TronFileDto, String> {
         .map(|f| TronFileDto {
             path: f.path.to_string_lossy().into_owned(),
             cells: f.cells,
+            blackboard: f.blackboard,
         })
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn save_tron_file(path: String, cells: Vec<TronCell>) -> Result<(), String> {
-    let content = tron_parser::serialize(&cells);
+pub async fn save_tron_file(
+    path: String,
+    cells: Vec<TronCell>,
+    blackboard: Option<serde_json::Value>,
+) -> Result<(), String> {
+    let content = tron_parser::serialize_with_blackboard(
+        &cells,
+        &blackboard.unwrap_or_else(|| serde_json::json!({})),
+    );
     tokio::fs::write(&path, content).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn create_tron_file(path: String) -> Result<TronFileDto, String> {
     let cells = vec![TronCell { run: true, content: String::new() }];
-    let content = tron_parser::serialize(&cells);
+    let blackboard = serde_json::json!({
+        "entries": [],
+        "notes": []
+    });
+    let content = tron_parser::serialize_with_blackboard(&cells, &blackboard);
     tokio::fs::write(&path, &content).await.map_err(|e| e.to_string())?;
-    Ok(TronFileDto { path, cells })
+    Ok(TronFileDto { path, cells, blackboard })
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -92,6 +105,7 @@ pub async fn run_task(
     let fake_file = TronFile {
         path: PathBuf::from("task.tron"),
         cells,
+        blackboard: serde_json::json!({}),
     };
     let task = fake_file.build_task(PathBuf::from(&project_path));
 

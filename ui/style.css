@@ -2,24 +2,24 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg:          #161618;
-  --bg-sidebar:  #111113;
-  --bg-panel:    #1c1c1f;
-  --bg-cell:     #1e1e22;
-  --bg-cell-run: #1a1e2a;
-  --bg-hover:    #26262b;
-  --bg-active:   #2a2a30;
-  --border:      #2d2d33;
-  --border-run:  #3b5bdb;
-  --text:        #d4d4d8;
-  --text-dim:    #71717a;
-  --text-bright: #fafafa;
-  --accent:      #4f80ff;
-  --accent-glow: rgba(79,128,255,.18);
-  --success:     #4ade80;
-  --warning:     #fbbf24;
-  --error:       #f87171;
-  --run-badge:   #3b5bdb;
+  --bg:          #f8f9fb;
+  --bg-sidebar:  #f0f4f7;
+  --bg-panel:    #ffffff;
+  --bg-cell:     #ffffff;
+  --bg-cell-run: #f1fbf8;
+  --bg-hover:    #e8eff3;
+  --bg-active:   #d9f3ec;
+  --border:      #d9e4ea;
+  --border-run:  #006b5e;
+  --text:        #2a3439;
+  --text-dim:    #566166;
+  --text-bright: #1f2a30;
+  --accent:      #006b5e;
+  --accent-glow: rgba(0,107,94,.18);
+  --success:     #1f9d65;
+  --warning:     #ca8a04;
+  --error:       #9f403d;
+  --run-badge:   #006b5e;
   --tab-h:       40px;
   --sidebar-w:   260px;
   --log-h:       220px;
@@ -30,7 +30,7 @@
 html, body { height: 100%; overflow: hidden; }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+  font-family: "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background: var(--bg);
   color: var(--text);
   line-height: 1.5;
@@ -50,6 +50,7 @@ body {
   min-width: var(--sidebar-w);
   background: var(--bg-sidebar);
   border-right: 1px solid var(--border);
+  box-shadow: 0 8px 30px rgba(42,52,57,.05);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -173,7 +174,8 @@ body {
   display: flex;
   align-items: center;
   border-bottom: 1px solid var(--border);
-  background: var(--bg-sidebar);
+  background: #ffffffcc;
+  backdrop-filter: blur(8px);
   flex-shrink: 0;
   -webkit-app-region: drag;
   padding-left: 4px;
@@ -196,18 +198,20 @@ body {
   gap: 6px;
   height: calc(var(--tab-h) - 1px);
   padding: 0 14px 0 12px;
-  border-right: 1px solid var(--border);
+  border-right: 1px solid transparent;
   font-size: 12.5px;
   color: var(--text-dim);
   cursor: pointer;
   white-space: nowrap;
-  transition: background .12s, color .12s;
+  transition: background .18s, color .18s, border-color .18s;
   position: relative;
   -webkit-app-region: no-drag;
+  border-radius: 10px 10px 0 0;
+  margin: 0 2px;
 }
 
-.tab:hover { background: var(--bg-hover); color: var(--text); }
-.tab.active { background: var(--bg); color: var(--text-bright); }
+.tab:hover { background: #eef5f8; color: var(--text); }
+.tab.active { background: #ffffff; color: var(--text-bright); border-color: var(--border); }
 .tab.active::after {
   content: '';
   position: absolute;
@@ -246,7 +250,7 @@ body {
   gap: 6px;
   margin: 0 10px;
   padding: 5px 14px;
-  border-radius: 6px;
+  border-radius: 999px;
   background: var(--accent);
   color: #fff;
   border: none;
@@ -254,14 +258,15 @@ body {
   font-weight: 600;
   cursor: pointer;
   flex-shrink: 0;
-  transition: opacity .15s, transform .1s;
+  transition: opacity .15s, transform .12s, box-shadow .15s;
   -webkit-app-region: no-drag;
+  box-shadow: 0 6px 20px rgba(0,107,94,.18);
 }
 
 .run-btn:hover:not(:disabled) { opacity: .85; }
 .run-btn:active:not(:disabled) { transform: scale(.97); }
 .run-btn:disabled { opacity: .4; cursor: not-allowed; }
-.run-btn.running { background: #854d0e; }
+.run-btn.running { background: #7044c1; }
 
 /* ── Editor area ── */
 #editor-area {
@@ -314,10 +319,11 @@ body {
 .cell {
   position: relative;
   border-radius: var(--radius);
-  border: 1.5px solid var(--border);
+  border: 1px solid var(--border);
   background: var(--bg-cell);
   overflow: hidden;
-  transition: border-color .15s, box-shadow .15s;
+  transition: border-color .18s, box-shadow .18s, transform .15s;
+  box-shadow: 0 4px 18px rgba(42,52,57,.05);
 }
 
 .cell.run-cell {
@@ -327,6 +333,11 @@ body {
 
 .cell.run-cell:focus-within {
   box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.cell:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 10px 28px rgba(42,52,57,.09);
 }
 
 .cell-header {
@@ -457,7 +468,8 @@ body {
 /* ── Execution log ── */
 #exec-panel {
   border-top: 1px solid var(--border);
-  background: var(--bg-sidebar);
+  background: rgba(255,255,255,.88);
+  backdrop-filter: blur(10px);
   display: flex;
   flex-direction: column;
   flex-shrink: 0;
@@ -525,26 +537,28 @@ body {
   gap: 8px;
   padding: 4px 14px;
   line-height: 1.5;
-  transition: background .1s;
+  transition: background .14s;
+  border-radius: 8px;
+  margin: 2px 8px;
 }
 
-.log-entry:hover { background: var(--bg-hover); }
+.log-entry:hover { background: #eef4f7; }
 
 .log-icon { flex-shrink: 0; margin-top: 1px; }
 .log-text { flex: 1; word-break: break-word; }
 
 .log-thinking .log-icon { color: var(--text-dim); }
 .log-thinking .log-text { color: var(--text-dim); font-style: italic; }
-.log-tool_call .log-icon { color: var(--accent); }
-.log-tool_call .log-text { color: var(--accent); }
+.log-tool_call .log-icon { color: #0b7c6d; }
+.log-tool_call .log-text { color: #0b7c6d; }
 .log-tool_result.success .log-icon { color: var(--success); }
 .log-tool_result.success .log-text { color: var(--text); }
-.log-tool_result.fail .log-icon { color: var(--error); }
-.log-tool_result.fail .log-text { color: var(--error); }
+.log-tool_result.fail .log-icon { color: #b42318; }
+.log-tool_result.fail .log-text { color: #b42318; }
 .log-text-event .log-icon { color: var(--text-bright); }
 .log-text-event .log-text { color: var(--text-bright); }
-.log-error .log-icon { color: var(--error); }
-.log-error .log-text { color: var(--error); font-weight: 600; }
+.log-error .log-icon { color: #b42318; }
+.log-error .log-text { color: #b42318; font-weight: 600; }
 .log-complete .log-icon { color: var(--success); }
 .log-complete .log-text { color: var(--success); font-weight: 600; }
 
@@ -562,6 +576,16 @@ body {
 }
 
 .btn-primary:hover { opacity: .85; }
+.btn-primary:focus-visible,
+.btn-secondary:focus-visible,
+.icon-btn:focus-visible,
+.run-btn:focus-visible,
+.sidebar-tab:focus-visible,
+.tab:focus-visible,
+.add-cell-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
 .btn-secondary {
   background: none;
@@ -607,7 +631,7 @@ body {
   padding: 24px;
   width: 420px;
   max-width: 90vw;
-  box-shadow: 0 24px 48px rgba(0,0,0,.5);
+  box-shadow: 0 24px 48px rgba(42,52,57,.18);
 }
 
 #modal-title {
@@ -810,3 +834,12 @@ body {
 .mono { font-family: "JetBrains Mono", "Fira Code", monospace; }
 
 .truncate { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
