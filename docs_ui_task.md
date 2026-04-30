@@ -67,13 +67,13 @@
 ---
 
 ## Phase 3：编辑器与执行面板样式重做（1.5~2 天）
-- [ ] 将 `#tab-bar` 改为轻量胶囊/卡片标签风格。
-- [ ] `Run` 按钮改为主题主按钮（含运行中态、禁用态）。
-- [ ] Cell 组件改为浅色卡片体系：
+- [x] 将 `#tab-bar` 改为轻量胶囊/卡片标签风格。
+- [x] `Run` 按钮改为主题主按钮（含运行中态、禁用态）。
+- [x] Cell 组件改为浅色卡片体系：
   - Header 的 run/static badge 改新语义色
   - hover/focus 阴影统一
-- [ ] `#exec-panel` 改为玻璃态/卡片态可折叠日志抽屉。
-- [ ] Log 条目按类型重着色（thinking/tool_call/success/fail/error）。
+- [x] `#exec-panel` 改为玻璃态/卡片态可折叠日志抽屉。
+- [x] Log 条目按类型重着色（thinking/tool_call/success/fail/error）。
 
 **验收标准**
 - 编辑、运行、日志三条主链路体验完整，视觉统一。
