@@ -105,3 +105,4 @@
 - 用户通过 `@path/to/file.pdf` 显式引用。
 - 运行时由 memory node 调模型 API 文件上传工具。
 - 上传返回 file id，后续 cell 可直接引用该 file id。
+
