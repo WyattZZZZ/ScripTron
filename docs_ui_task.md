@@ -84,9 +84,15 @@
 - [ ] `tool-card` 升级为 dashboard 卡片（状态、版本、操作按钮层次优化）。
 - [ ] provider-card 采用新卡片视觉 + 激活态强调。
 - [ ] 表单控件（select/input/textarea）统一为轻量面板风格。
+- [ ] CLI 市场数据源切换为公开 GitHub Registry 仓库：
+  - [ ] 打开市场时实时拉取 registry 清单（manifest 列表）。
+  - [ ] 展示按平台可安装状态（macOS/Linux）。
+  - [ ] 安装时执行仓库内对应安装脚本并显示安装日志。
+  - [ ] 安装后自动触发 skill 生成与可用性校验。
 
 **验收标准**
 - Marketplace 与 Settings 视觉风格与主界面一致。
+- Marketplace 可直接从公开 GitHub 仓库完成“发现→安装→可调用”闭环。
 
 ---
 

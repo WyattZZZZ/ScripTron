@@ -88,9 +88,18 @@
 - `scriptron project open <path>`：打开/切换项目。
 
 ## CLI 市场
-- 只展示官方源。
-- 下载与安装走官方仓库。
-- 安装完成后自动生成 skill（由 CLI `--help` 推导参数模板与示例）。
+- 市场源改为单一公开 GitHub 仓库（Marketplace Registry Repo）。
+- 用户每次打开 CLI 市场时，客户端实时拉取该仓库索引（manifest 列表）。
+- 每个 CLI 安装项包含安装脚本与元信息（名称、版本、平台、校验信息）。
+- 安装流程：
+  1. 拉取/解析 registry 清单；
+  2. 用户选择 CLI；
+  3. 下载并执行对应安装脚本（按平台分发）；
+  4. 安装完成后自动生成 skill（由 CLI `--help` 推导参数模板与示例）。
+- 安全要求：
+  - 仅允许执行白名单仓库中的脚本；
+  - 安装脚本需带 hash/signature 校验；
+  - 所有安装动作写入 blackboard 与安装日志。
 
 ## Memory Node（@文档）
 - 用户通过 `@path/to/file.pdf` 显式引用。
