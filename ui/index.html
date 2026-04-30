@@ -1,101 +1,80 @@
 <!DOCTYPE html>
-<html lang="en">
+<html class="light" lang="en">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ScripTron</title>
+  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            primary: '#006b5e',
+            secondary: '#7044c1',
+            surface: '#f8f9fb',
+            'surface-container-low': '#f0f4f7',
+            'surface-container': '#e8eff3',
+            'surface-container-high': '#e1e9ee',
+            'on-surface': '#2a3439',
+            'on-surface-variant': '#566166',
+            outline: '#d9e4ea'
+          },
+          fontFamily: { body: ['Manrope', 'sans-serif'] }
+        }
+      }
+    }
+  </script>
   <link rel="stylesheet" href="style.css" />
 </head>
-<body>
-  <!-- ── App shell ── -->
-  <div id="app">
-
-    <!-- Sidebar -->
-    <aside id="sidebar">
-      <div id="sidebar-header">
-        <div id="logo">
-          <span class="logo-icon">⬡</span>
-          <span class="logo-text">ScripTron</span>
+<body class="bg-surface text-on-surface font-body h-screen overflow-hidden">
+  <div id="app" class="flex h-screen">
+    <aside id="sidebar" class="w-64 shrink-0 border-r border-outline bg-surface-container-low flex flex-col">
+      <div id="sidebar-header" class="h-14 px-4 flex items-center border-b border-outline">
+        <div id="logo" class="flex items-center gap-2">
+          <span class="logo-icon material-symbols-outlined text-primary" style="font-variation-settings: 'FILL' 1;">deployed_code</span>
+          <span class="logo-text font-extrabold tracking-tight">ScripTron</span>
         </div>
       </div>
 
-      <!-- Sidebar tabs -->
-      <div id="sidebar-tabs">
-        <button class="sidebar-tab active" data-panel="files" title="Files">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/>
-            <polyline points="13 2 13 9 20 9"/>
-          </svg>
-        </button>
-        <button class="sidebar-tab" data-panel="marketplace" title="Marketplace">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="9" cy="21" r="1"/><circle cx="20" cy="21" r="1"/>
-            <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"/>
-          </svg>
-        </button>
-        <button class="sidebar-tab" data-panel="settings" title="Settings">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="3"/>
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-          </svg>
-        </button>
+      <div id="sidebar-tabs" class="grid grid-cols-3 border-b border-outline">
+        <button class="sidebar-tab active h-11 text-on-surface-variant hover:bg-surface-container" data-panel="files" title="Files">📁</button>
+        <button class="sidebar-tab h-11 text-on-surface-variant hover:bg-surface-container" data-panel="marketplace" title="Marketplace">🧩</button>
+        <button class="sidebar-tab h-11 text-on-surface-variant hover:bg-surface-container" data-panel="settings" title="Settings">⚙️</button>
       </div>
 
-      <!-- Files panel -->
-      <div id="panel-files" class="sidebar-panel active">
-        <div class="panel-header">
-          <span>Workspace</span>
-          <button id="btn-new-file" class="icon-btn" title="New .tron file">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-            </svg>
-          </button>
-        </div>
-        <div id="file-tree"></div>
+      <div id="panel-files" class="sidebar-panel active flex-1 min-h-0">
+        <div class="panel-header"><span>Workspace</span><button id="btn-new-file" class="icon-btn" title="New .tron file">+</button></div>
+        <div id="file-tree" class="flex-1 overflow-auto"></div>
       </div>
 
-      <!-- Marketplace panel -->
-      <div id="panel-marketplace" class="sidebar-panel">
-        <div class="panel-header">
-          <span>CLI Marketplace</span>
-          <button id="btn-install-local" class="icon-btn" title="Install from file">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-            </svg>
-          </button>
-        </div>
-        <div id="marketplace-list"></div>
+      <div id="panel-marketplace" class="sidebar-panel flex-1 min-h-0">
+        <div class="panel-header"><span>CLI Marketplace</span><button id="btn-install-local" class="icon-btn" title="Install from file">+</button></div>
+        <div id="marketplace-list" class="flex-1 overflow-auto"></div>
       </div>
 
-      <!-- Settings panel -->
-      <div id="panel-settings" class="sidebar-panel">
+      <div id="panel-settings" class="sidebar-panel flex-1 min-h-0">
         <div class="panel-header"><span>Settings</span></div>
-        <div id="settings-content"></div>
+        <div id="settings-content" class="flex-1 overflow-auto"></div>
       </div>
     </aside>
 
-    <!-- Main content -->
-    <main id="main">
-
-      <!-- Tab bar -->
-      <div id="tab-bar">
-        <div id="tabs"></div>
-        <button id="btn-run" class="run-btn" title="Run all cells (⌘R)" disabled>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
-            <polygon points="5 3 19 12 5 21 5 3"/>
-          </svg>
-          Run
-        </button>
+    <main id="main" class="flex-1 flex flex-col min-w-0 bg-surface">
+      <div id="tab-bar" class="h-11 border-b border-outline bg-white/80 backdrop-blur px-1 flex items-center">
+        <div id="tabs" class="flex-1 h-full flex items-end overflow-x-auto"></div>
+        <button id="btn-run" class="run-btn" title="Run all cells (⌘R)" disabled>Run</button>
       </div>
 
-      <!-- Editor area -->
-      <div id="editor-area">
-        <div id="welcome-screen">
-          <div class="welcome-inner">
-            <span class="welcome-icon">⬡</span>
-            <h1>ScripTron</h1>
-            <p>Natural language automation for everyone.</p>
-            <div class="welcome-actions">
+      <div id="editor-area" class="flex-1 overflow-y-auto p-0">
+        <div id="welcome-screen" class="h-full flex items-center justify-center">
+          <div class="welcome-inner text-center">
+            <span class="welcome-icon material-symbols-outlined text-primary text-5xl" style="font-variation-settings: 'FILL' 1;">auto_awesome</span>
+            <h1 class="text-3xl font-extrabold">ScripTron</h1>
+            <p class="text-on-surface-variant">Natural language automation for everyone.</p>
+            <div class="welcome-actions mt-2 flex gap-3 justify-center">
               <button class="btn-primary" id="btn-welcome-new">New task</button>
               <button class="btn-secondary" id="btn-welcome-open">Open file</button>
             </div>
@@ -103,20 +82,11 @@
         </div>
       </div>
 
-      <!-- Execution log -->
       <div id="exec-panel" class="collapsed">
         <div id="exec-header">
-          <div id="exec-title">
-            <span id="exec-status-dot" class="status-dot idle"></span>
-            <span>Execution Log</span>
-          </div>
+          <div id="exec-title"><span id="exec-status-dot" class="status-dot idle"></span><span>Execution Log</span></div>
           <div id="exec-controls">
-            <button id="btn-clear-log" class="icon-btn" title="Clear">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/>
-                <path d="M10 11v6"/><path d="M14 11v6"/>
-              </svg>
-            </button>
+            <button id="btn-clear-log" class="icon-btn" title="Clear">🗑</button>
             <button id="btn-toggle-log" class="icon-btn" title="Toggle panel">
               <svg id="toggle-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="18 15 12 9 6 15"/>
@@ -127,10 +97,8 @@
         <div id="exec-log"></div>
       </div>
     </main>
-
   </div>
 
-  <!-- Modals -->
   <div id="modal-overlay" class="hidden">
     <div id="modal-box">
       <div id="modal-title"></div>

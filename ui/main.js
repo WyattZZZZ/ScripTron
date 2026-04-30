@@ -32,6 +32,7 @@ let activeTab = -1;
 let workspacePath = '';
 let isRunning = false;
 let execUnlisten = null;
+let currentRunEvents = [];
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
@@ -148,6 +149,7 @@ async function loadEditorForTab(tab) {
     const file = await invoke('open_tron_file', { path: tab.path });
     if (file) {
       tab.cells = file.cells;
+      tab.blackboard = file.blackboard || { entries: [], notes: [] };
     }
     Editor.load(tab.path, tab.cells || []);
   } catch (e) {
@@ -164,7 +166,7 @@ async function openFile(path, name) {
   }
   try {
     const file = await invoke('open_tron_file', { path });
-    const tab = { path, name, dirty: false, cells: file?.cells || [] };
+    const tab = { path, name, dirty: false, cells: file?.cells || [], blackboard: file?.blackboard || { entries: [], notes: [] } };
     openTabs.push(tab);
     await saveCurrentTab();
     activeTab = openTabs.length - 1;
@@ -199,7 +201,7 @@ async function saveCurrentTab() {
   const cells = Editor.getCells();
   tab.cells = cells;
   try {
-    await invoke('save_tron_file', { path: tab.path, cells });
+    await invoke('save_tron_file', { path: tab.path, cells, blackboard: tab.blackboard || { entries: [], notes: [] } });
     tab.dirty = false;
     renderTabs();
   } catch (e) {
@@ -234,7 +236,7 @@ function showNewFileModal() {
     const path = `${workspacePath}/${name}`;
     try {
       const file = await invoke('create_tron_file', { path });
-      const tab = { path, name, dirty: false, cells: file?.cells || [] };
+      const tab = { path, name, dirty: false, cells: file?.cells || [], blackboard: file?.blackboard || { entries: [], notes: [] } };
       openTabs.push(tab);
       activeTab = openTabs.length - 1;
       Editor.load(tab.path, tab.cells);
@@ -304,6 +306,7 @@ async function runTask() {
     </svg> Running…`;
   setStatusDot('running');
   clearLog();
+  currentRunEvents = [];
   expandExecPanel();
 
   try {
@@ -324,9 +327,25 @@ async function runTask() {
 
 // ── Execution event handling ───────────────────────────────────────────────────
 function handleExecEvent(event) {
+  currentRunEvents.push(event);
+  appendEventToBlackboard(event);
   appendLog(event);
   if (event.type === 'complete') setStatusDot('done');
   if (event.type === 'error') setStatusDot('error');
+}
+
+function appendEventToBlackboard(event) {
+  if (activeTab < 0 || !openTabs[activeTab]) return;
+  const tab = openTabs[activeTab];
+  if (!tab.blackboard || typeof tab.blackboard !== 'object') {
+    tab.blackboard = { entries: [], notes: [] };
+  }
+  if (!Array.isArray(tab.blackboard.entries)) tab.blackboard.entries = [];
+  tab.blackboard.entries.push({
+    ts: new Date().toISOString(),
+    type: event.type,
+    payload: event,
+  });
 }
 
 function appendLog(event) {

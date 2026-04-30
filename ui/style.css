@@ -2,24 +2,24 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg:          #161618;
-  --bg-sidebar:  #111113;
-  --bg-panel:    #1c1c1f;
-  --bg-cell:     #1e1e22;
-  --bg-cell-run: #1a1e2a;
-  --bg-hover:    #26262b;
-  --bg-active:   #2a2a30;
-  --border:      #2d2d33;
-  --border-run:  #3b5bdb;
-  --text:        #d4d4d8;
-  --text-dim:    #71717a;
-  --text-bright: #fafafa;
-  --accent:      #4f80ff;
-  --accent-glow: rgba(79,128,255,.18);
-  --success:     #4ade80;
-  --warning:     #fbbf24;
-  --error:       #f87171;
-  --run-badge:   #3b5bdb;
+  --bg:          #f8f9fb;
+  --bg-sidebar:  #f0f4f7;
+  --bg-panel:    #ffffff;
+  --bg-cell:     #ffffff;
+  --bg-cell-run: #f1fbf8;
+  --bg-hover:    #e8eff3;
+  --bg-active:   #d9f3ec;
+  --border:      #d9e4ea;
+  --border-run:  #006b5e;
+  --text:        #2a3439;
+  --text-dim:    #566166;
+  --text-bright: #1f2a30;
+  --accent:      #006b5e;
+  --accent-glow: rgba(0,107,94,.18);
+  --success:     #1f9d65;
+  --warning:     #ca8a04;
+  --error:       #9f403d;
+  --run-badge:   #006b5e;
   --tab-h:       40px;
   --sidebar-w:   260px;
   --log-h:       220px;
@@ -30,7 +30,7 @@
 html, body { height: 100%; overflow: hidden; }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif;
+  font-family: "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background: var(--bg);
   color: var(--text);
   line-height: 1.5;
@@ -50,6 +50,7 @@ body {
   min-width: var(--sidebar-w);
   background: var(--bg-sidebar);
   border-right: 1px solid var(--border);
+  box-shadow: 0 8px 30px rgba(42,52,57,.05);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -173,7 +174,8 @@ body {
   display: flex;
   align-items: center;
   border-bottom: 1px solid var(--border);
-  background: var(--bg-sidebar);
+  background: #ffffffcc;
+  backdrop-filter: blur(8px);
   flex-shrink: 0;
   -webkit-app-region: drag;
   padding-left: 4px;
@@ -261,7 +263,7 @@ body {
 .run-btn:hover:not(:disabled) { opacity: .85; }
 .run-btn:active:not(:disabled) { transform: scale(.97); }
 .run-btn:disabled { opacity: .4; cursor: not-allowed; }
-.run-btn.running { background: #854d0e; }
+.run-btn.running { background: #7044c1; }
 
 /* ── Editor area ── */
 #editor-area {
@@ -607,7 +609,7 @@ body {
   padding: 24px;
   width: 420px;
   max-width: 90vw;
-  box-shadow: 0 24px 48px rgba(0,0,0,.5);
+  box-shadow: 0 24px 48px rgba(42,52,57,.18);
 }
 
 #modal-title {
