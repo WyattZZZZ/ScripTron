@@ -26,6 +26,8 @@ pub struct TronCell {
 pub struct TronFile {
     pub path: PathBuf,
     pub cells: Vec<TronCell>,
+    #[serde(default)]
+    pub blackboard: serde_json::Value,
 }
 
 /// The input payload handed to the agent loop.
@@ -64,10 +66,12 @@ impl TronFile {
 /// Parse a `.tron` file from disk.
 pub fn parse_file(path: impl AsRef<Path>) -> Result<TronFile, ParseError> {
     let raw = std::fs::read_to_string(path.as_ref())?;
-    let cells = parse_str(&raw)?;
+    let (blackboard, body) = extract_blackboard(&raw);
+    let cells = parse_str(&body)?;
     Ok(TronFile {
         path: path.as_ref().to_path_buf(),
         cells,
+        blackboard,
     })
 }
 
@@ -141,7 +145,15 @@ pub fn parse_str(src: &str) -> Result<Vec<TronCell>, ParseError> {
 
 /// Serialise cells back to `.tron` format.
 pub fn serialize(cells: &[TronCell]) -> String {
+    serialize_with_blackboard(cells, &serde_json::json!({}))
+}
+
+/// Serialise cells + hidden blackboard back to `.tron` format.
+pub fn serialize_with_blackboard(cells: &[TronCell], blackboard: &serde_json::Value) -> String {
     let mut out = String::new();
+    out.push_str("---blackboard---\n");
+    out.push_str(&serde_json::to_string_pretty(blackboard).unwrap_or_else(|_| "{}".into()));
+    out.push_str("\n---\n\n");
     for cell in cells {
         let flag = if cell.run { "true" } else { "false" };
         out.push_str(&format!("---run: {}---\n", flag));
@@ -152,6 +164,21 @@ pub fn serialize(cells: &[TronCell]) -> String {
         out.push_str("---\n\n");
     }
     out
+}
+
+fn extract_blackboard(src: &str) -> (serde_json::Value, String) {
+    let marker = "---blackboard---\n";
+    if !src.starts_with(marker) {
+        return (serde_json::json!({}), src.to_string());
+    }
+    let rest = &src[marker.len()..];
+    if let Some(end) = rest.find("\n---\n") {
+        let json_part = &rest[..end];
+        let body = &rest[end + "\n---\n".len()..];
+        let blackboard = serde_json::from_str(json_part).unwrap_or_else(|_| serde_json::json!({}));
+        return (blackboard, body.to_string());
+    }
+    (serde_json::json!({}), src.to_string())
 }
 
 // ---run: true--- or ---run: false---
@@ -173,12 +200,13 @@ mod tests {
     #[test]
     fn round_trips() {
         // Canonical format: each cell ends with ---\n\n (trailing blank line included)
-        let src = "---run: true---\nLook at all the CSV files and summarise them.\n---\n\n---run: false---\n## Notes\nRemember to check Q2 figures.\n---\n\n";
-        let cells = parse_str(src).unwrap();
+        let src = "---blackboard---\n{}\n---\n\n---run: true---\nLook at all the CSV files and summarise them.\n---\n\n---run: false---\n## Notes\nRemember to check Q2 figures.\n---\n\n";
+        let (_, body) = extract_blackboard(src);
+        let cells = parse_str(&body).unwrap();
         assert_eq!(cells.len(), 2);
         assert!(cells[0].run);
         assert!(!cells[1].run);
-        assert_eq!(serialize(&cells), src);
+        assert_eq!(serialize_with_blackboard(&cells, &serde_json::json!({})), src);
     }
 
     #[test]
@@ -196,7 +224,7 @@ mod tests {
             TronCell { run: false, content: "Context note".into() },
             TronCell { run: true, content: "Instruction two".into() },
         ];
-        let file = TronFile { path: PathBuf::from("test.tron"), cells };
+        let file = TronFile { path: PathBuf::from("test.tron"), cells, blackboard: serde_json::json!({}) };
         let task = file.build_task("/tmp");
         assert_eq!(task.instructions, vec!["Instruction one", "Instruction two"]);
         assert_eq!(task.context, vec!["Context note"]);
