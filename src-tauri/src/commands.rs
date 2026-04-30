@@ -105,6 +105,7 @@ pub async fn run_task(
     let fake_file = TronFile {
         path: PathBuf::from("task.tron"),
         cells,
+        blackboard: serde_json::json!({}),
     };
     let task = fake_file.build_task(PathBuf::from(&project_path));
 
