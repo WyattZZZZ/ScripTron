@@ -350,6 +350,7 @@ function appendEventToBlackboard(event) {
 
 function appendLog(event) {
   const log = document.getElementById('exec-log');
+  if (!log) return;
   const entry = document.createElement('div');
   entry.className = `log-entry log-${event.type}`;
 
@@ -400,19 +401,25 @@ function appendLog(event) {
 }
 
 function clearLog() {
-  document.getElementById('exec-log').innerHTML = '';
+  const log = document.getElementById('exec-log');
+  if (!log) return;
+  log.innerHTML = '';
   setStatusDot('running');
 }
 
 function setStatusDot(state) {
   const dot = document.getElementById('exec-status-dot');
+  if (!dot) return;
   dot.className = `status-dot ${state}`;
 }
 
 // ── Execution panel toggle ────────────────────────────────────────────────────
 function setupExecPanel() {
-  document.getElementById('exec-header').addEventListener('click', toggleExecPanel);
-  document.getElementById('btn-clear-log').addEventListener('click', e => {
+  const header = document.getElementById('exec-header');
+  const clearBtn = document.getElementById('btn-clear-log');
+  if (!header || !clearBtn) return;
+  header.addEventListener('click', toggleExecPanel);
+  clearBtn.addEventListener('click', e => {
     e.stopPropagation();
     clearLog();
     setStatusDot('idle');
@@ -422,6 +429,7 @@ function setupExecPanel() {
 function toggleExecPanel() {
   const panel = document.getElementById('exec-panel');
   const icon = document.getElementById('toggle-icon');
+  if (!panel || !icon) return;
   if (panel.classList.contains('collapsed')) {
     expandExecPanel();
   } else {
@@ -433,6 +441,7 @@ function toggleExecPanel() {
 function expandExecPanel() {
   const panel = document.getElementById('exec-panel');
   const icon = document.getElementById('toggle-icon');
+  if (!panel || !icon) return;
   panel.classList.remove('collapsed');
   icon.setAttribute('points', '18 15 12 9 6 15');
 }
@@ -520,7 +529,38 @@ async function renderSettings() {
   });
 
   container.appendChild(section);
+
+  // ── Project blackboard inspector (core runtime first) ─────────────────────
+  const bb = document.createElement('div');
+  bb.className = 'settings-section';
+  const tab = openTabs[activeTab];
+  const board = tab?.blackboard || { entries: [], notes: [] };
+  const entries = Array.isArray(board.entries) ? board.entries : [];
+  const last = entries.length ? entries[entries.length - 1] : null;
+
+  bb.innerHTML = `
+    <div class="settings-section-title">Project Blackboard</div>
+    <div style="padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg-cell)">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <span style="font-size:12px;color:var(--text-dim)">Entries: <strong style="color:var(--text)">${entries.length}</strong></span>
+        <button class="btn-secondary" style="font-size:11px;padding:4px 10px" onclick="clearActiveBlackboard()">Clear</button>
+      </div>
+      <div style="margin-top:8px;font-size:11px;color:var(--text-dim)">
+        ${last ? `Last event: <code class="mono">${escHtml(last.type || 'unknown')}</code> @ ${escHtml(last.ts || '')}` : 'No events yet.'}
+      </div>
+    </div>
+  `;
+  container.appendChild(bb);
 }
+
+window.clearActiveBlackboard = async () => {
+  if (activeTab < 0 || !openTabs[activeTab]) return;
+  if (!confirm('Clear blackboard entries for this file?')) return;
+  openTabs[activeTab].blackboard = { entries: [], notes: [] };
+  openTabs[activeTab].dirty = true;
+  await saveCurrentTab();
+  await renderSettings();
+};
 
 function providerIcon(id) {
   const icons = {
@@ -646,11 +686,17 @@ window.showModal = function showModal(title, bodyHtml, confirmLabel, onConfirm, 
 
   const confirm = document.getElementById('modal-confirm');
   const cancel = document.getElementById('modal-cancel');
+  const overlay = document.getElementById('modal-overlay');
+
+  const onEsc = (e) => {
+    if (e.key === 'Escape') cleanup();
+  };
 
   const cleanup = () => {
-    document.getElementById('modal-overlay').classList.add('hidden');
+    overlay.classList.add('hidden');
     confirm.replaceWith(confirm.cloneNode(true));
     cancel.replaceWith(cancel.cloneNode(true));
+    document.removeEventListener('keydown', onEsc);
   };
 
   document.getElementById('modal-confirm').addEventListener('click', async () => {
@@ -660,9 +706,10 @@ window.showModal = function showModal(title, bodyHtml, confirmLabel, onConfirm, 
 
   document.getElementById('modal-cancel').addEventListener('click', cleanup);
 
-  document.getElementById('modal-overlay').addEventListener('click', e => {
-    if (e.target === document.getElementById('modal-overlay')) cleanup();
+  overlay.addEventListener('click', e => {
+    if (e.target === overlay) cleanup();
   });
+  document.addEventListener('keydown', onEsc);
 };
 
 // ── Utilities ─────────────────────────────────────────────────────────────────

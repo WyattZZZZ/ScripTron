@@ -32,7 +32,7 @@
 </head>
 <body class="bg-surface text-on-surface font-body h-screen overflow-hidden">
   <div id="app" class="flex h-screen">
-    <aside id="sidebar" class="w-64 shrink-0 border-r border-outline bg-surface-container-low flex flex-col">
+    <aside id="sidebar" class="w-72 shrink-0 border-r border-outline bg-surface-container-low flex flex-col">
       <div id="sidebar-header" class="h-14 px-4 flex items-center border-b border-outline">
         <div id="logo" class="flex items-center gap-2">
           <span class="logo-icon material-symbols-outlined text-primary" style="font-variation-settings: 'FILL' 1;">deployed_code</span>
@@ -40,10 +40,15 @@
         </div>
       </div>
 
-      <div id="sidebar-tabs" class="grid grid-cols-3 border-b border-outline">
-        <button class="sidebar-tab active h-11 text-on-surface-variant hover:bg-surface-container" data-panel="files" title="Files">📁</button>
-        <button class="sidebar-tab h-11 text-on-surface-variant hover:bg-surface-container" data-panel="marketplace" title="Marketplace">🧩</button>
-        <button class="sidebar-tab h-11 text-on-surface-variant hover:bg-surface-container" data-panel="settings" title="Settings">⚙️</button>
+      <div id="sidebar-tabs" class="flex flex-col gap-2 border-b border-outline p-3">
+        <button class="sidebar-tab active text-left rounded-lg px-3 py-2 text-on-surface-variant hover:bg-surface-container" data-panel="files" title="Files">📁 All Projects</button>
+        <button class="sidebar-tab text-left rounded-lg px-3 py-2 text-on-surface-variant hover:bg-surface-container" data-panel="marketplace" title="Marketplace">🧩 CLI Tools</button>
+        <button class="sidebar-tab text-left rounded-lg px-3 py-2 text-on-surface-variant hover:bg-surface-container" data-panel="settings" title="Settings">⚙️ Settings</button>
+      </div>
+
+      <div class="mt-auto p-4 border-t border-outline space-y-2 text-on-surface-variant">
+        <div class="rounded-lg px-3 py-2 hover:bg-surface-container cursor-pointer">❓ Help Center</div>
+        <div class="rounded-lg px-3 py-2 hover:bg-surface-container cursor-pointer">↪ Log Out</div>
       </div>
 
       <div id="panel-files" class="sidebar-panel active flex-1 min-h-0">
@@ -63,38 +68,78 @@
     </aside>
 
     <main id="main" class="flex-1 flex flex-col min-w-0 bg-surface">
-      <div id="tab-bar" class="h-11 border-b border-outline bg-white/80 backdrop-blur px-1 flex items-center">
-        <div id="tabs" class="flex-1 h-full flex items-end overflow-x-auto"></div>
+      <div id="tab-bar" class="h-16 border-b border-outline bg-white/80 backdrop-blur px-8 flex items-center gap-4">
+        <div class="relative flex-1 max-w-xl">
+          <input class="w-full rounded-xl border border-outline bg-surface-container-low pl-10 pr-4 py-2 text-sm" placeholder="Search automations..." />
+          <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant">search</span>
+        </div>
+        <button class="icon-btn" title="Notifications">🔔</button>
+        <button class="icon-btn" title="Settings">⚙️</button>
+        <div class="h-8 w-px bg-outline"></div>
+        <div class="flex items-center gap-3">
+          <div class="text-right leading-tight">
+            <div class="text-sm font-semibold">Alex Rivera</div>
+            <div class="text-xs text-on-surface-variant">Pro Plan</div>
+          </div>
+          <div class="w-9 h-9 rounded-full bg-surface-container-high grid place-items-center">👤</div>
+        </div>
+        <div id="tabs" class="hidden"></div>
         <button id="btn-run" class="run-btn" title="Run all cells (⌘R)" disabled>Run</button>
       </div>
 
-      <div id="editor-area" class="flex-1 overflow-y-auto p-0">
+      <div id="editor-area" class="flex-1 overflow-y-auto p-8">
         <div id="welcome-screen" class="h-full flex items-center justify-center">
-          <div class="welcome-inner text-center">
-            <span class="welcome-icon material-symbols-outlined text-primary text-5xl" style="font-variation-settings: 'FILL' 1;">auto_awesome</span>
-            <h1 class="text-3xl font-extrabold">ScripTron</h1>
-            <p class="text-on-surface-variant">Natural language automation for everyone.</p>
-            <div class="welcome-actions mt-2 flex gap-3 justify-center">
-              <button class="btn-primary" id="btn-welcome-new">New task</button>
-              <button class="btn-secondary" id="btn-welcome-open">Open file</button>
+          <div class="w-full max-w-6xl">
+            <div class="mb-8">
+              <h1 class="text-5xl font-extrabold mb-2">Workspace</h1>
+              <p class="text-on-surface-variant text-lg">Manage your automation lifecycle from initial design to live execution.</p>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
+              <div class="rounded-2xl border border-outline bg-white p-6 shadow-sm">
+                <div class="flex items-center justify-between mb-3">
+                  <h3 class="text-2xl font-bold">All Projects</h3>
+                  <span class="text-xs px-2 py-1 rounded-full bg-emerald-100 text-emerald-700">Active</span>
+                </div>
+                <p class="text-on-surface-variant mb-4">Open existing `.tron` tasks or create new automation scripts.</p>
+                <div class="welcome-actions mt-2 flex gap-3">
+                  <button class="btn-primary" id="btn-welcome-new">New task</button>
+                  <button class="btn-secondary" id="btn-welcome-open">Browse</button>
+                </div>
+              </div>
+              <div class="rounded-2xl border border-outline bg-white p-6 shadow-sm">
+                <div class="flex items-center justify-between mb-3">
+                  <h3 class="text-2xl font-bold">CLI Marketplace</h3>
+                  <span class="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">Idle</span>
+                </div>
+                <p class="text-on-surface-variant">Install official CLI tools and expand automation capabilities.</p>
+              </div>
+              <div class="rounded-2xl border border-outline bg-primary text-white p-6 shadow-sm">
+                <h3 class="text-2xl font-bold mb-2">Start Automating</h3>
+                <p class="opacity-90">Use natural language to create end-to-end workflows.</p>
+              </div>
+            </div>
+            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              <div class="lg:col-span-2 rounded-2xl border border-outline bg-white p-6">
+                <h3 class="text-2xl font-bold mb-2">Cloud Resource Sync</h3>
+                <p class="text-on-surface-variant mb-4">Synchronizing multi-cloud assets across AWS, Azure and GCP with automated tagging.</p>
+                <div class="flex gap-8 text-sm">
+                  <div><div class="text-3xl font-black text-primary">92%</div><div class="uppercase tracking-wider text-xs text-on-surface-variant">Sync Accuracy</div></div>
+                  <div><div class="text-3xl font-black text-secondary">24k</div><div class="uppercase tracking-wider text-xs text-on-surface-variant">Monthly Ops</div></div>
+                </div>
+              </div>
+              <div class="rounded-2xl border border-outline bg-white p-6">
+                <h4 class="text-xl font-bold mb-2">Quick Action</h4>
+                <p class="text-on-surface-variant mb-4">Create or open an automation project.</p>
+                <button class="btn-primary w-full">Create Project</button>
+              </div>
+            </div>
+            <div class="fixed bottom-6 left-1/2 -translate-x-1/2 rounded-full border border-outline bg-white/90 backdrop-blur px-6 py-3 shadow-lg flex items-center gap-4 text-sm">
+              <span class="px-2 py-1 rounded bg-surface-container-low font-bold">⌘</span>
+              <span class="px-2 py-1 rounded bg-surface-container-low font-bold">K</span>
+              <span class="uppercase tracking-widest text-on-surface-variant">Command Center</span>
             </div>
           </div>
         </div>
-      </div>
-
-      <div id="exec-panel" class="collapsed">
-        <div id="exec-header">
-          <div id="exec-title"><span id="exec-status-dot" class="status-dot idle"></span><span>Execution Log</span></div>
-          <div id="exec-controls">
-            <button id="btn-clear-log" class="icon-btn" title="Clear">🗑</button>
-            <button id="btn-toggle-log" class="icon-btn" title="Toggle panel">
-              <svg id="toggle-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <polyline points="18 15 12 9 6 15"/>
-              </svg>
-            </button>
-          </div>
-        </div>
-        <div id="exec-log"></div>
       </div>
     </main>
   </div>

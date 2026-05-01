@@ -576,6 +576,16 @@ body {
 }
 
 .btn-primary:hover { opacity: .85; }
+.btn-primary:focus-visible,
+.btn-secondary:focus-visible,
+.icon-btn:focus-visible,
+.run-btn:focus-visible,
+.sidebar-tab:focus-visible,
+.tab:focus-visible,
+.add-cell-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 
 .btn-secondary {
   background: none;
@@ -824,3 +834,12 @@ body {
 .mono { font-family: "JetBrains Mono", "Fira Code", monospace; }
 
 .truncate { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
