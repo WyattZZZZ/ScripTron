@@ -4,144 +4,513 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ScripTron</title>
-  <script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
-  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
-  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet"/>
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            primary: '#006b5e',
-            secondary: '#7044c1',
-            surface: '#f8f9fb',
-            'surface-container-low': '#f0f4f7',
-            'surface-container': '#e8eff3',
-            'surface-container-high': '#e1e9ee',
-            'on-surface': '#2a3439',
-            'on-surface-variant': '#566166',
-            outline: '#d9e4ea'
-          },
-          fontFamily: { body: ['Manrope', 'sans-serif'] }
-        }
-      }
-    }
-  </script>
+  <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="style.css" />
 </head>
-<body class="bg-surface text-on-surface font-body h-screen overflow-hidden">
-  <div id="app" class="flex h-screen">
-    <aside id="sidebar" class="w-72 shrink-0 border-r border-outline bg-surface-container-low flex flex-col">
-      <div id="sidebar-header" class="h-14 px-4 flex items-center border-b border-outline">
-        <div id="logo" class="flex items-center gap-2">
-          <span class="logo-icon material-symbols-outlined text-primary" style="font-variation-settings: 'FILL' 1;">deployed_code</span>
-          <span class="logo-text font-extrabold tracking-tight">ScripTron</span>
-        </div>
-      </div>
-
-      <div id="sidebar-tabs" class="flex flex-col gap-2 border-b border-outline p-3">
-        <button class="sidebar-tab active text-left rounded-lg px-3 py-2 text-on-surface-variant hover:bg-surface-container" data-panel="files" title="Files">📁 All Projects</button>
-        <button class="sidebar-tab text-left rounded-lg px-3 py-2 text-on-surface-variant hover:bg-surface-container" data-panel="marketplace" title="Marketplace">🧩 CLI Tools</button>
-        <button class="sidebar-tab text-left rounded-lg px-3 py-2 text-on-surface-variant hover:bg-surface-container" data-panel="settings" title="Settings">⚙️ Settings</button>
-      </div>
-
-      <div class="mt-auto p-4 border-t border-outline space-y-2 text-on-surface-variant">
-        <div class="rounded-lg px-3 py-2 hover:bg-surface-container cursor-pointer">❓ Help Center</div>
-        <div class="rounded-lg px-3 py-2 hover:bg-surface-container cursor-pointer">↪ Log Out</div>
-      </div>
-
-      <div id="panel-files" class="sidebar-panel active flex-1 min-h-0">
-        <div class="panel-header"><span>Workspace</span><button id="btn-new-file" class="icon-btn" title="New .tron file">+</button></div>
-        <div id="file-tree" class="flex-1 overflow-auto"></div>
-      </div>
-
-      <div id="panel-marketplace" class="sidebar-panel flex-1 min-h-0">
-        <div class="panel-header"><span>CLI Marketplace</span><button id="btn-install-local" class="icon-btn" title="Install from file">+</button></div>
-        <div id="marketplace-list" class="flex-1 overflow-auto"></div>
-      </div>
-
-      <div id="panel-settings" class="sidebar-panel flex-1 min-h-0">
-        <div class="panel-header"><span>Settings</span></div>
-        <div id="settings-content" class="flex-1 overflow-auto"></div>
-      </div>
-    </aside>
-
-    <main id="main" class="flex-1 flex flex-col min-w-0 bg-surface">
-      <div id="tab-bar" class="h-16 border-b border-outline bg-white/80 backdrop-blur px-8 flex items-center gap-4">
-        <div class="relative flex-1 max-w-xl">
-          <input class="w-full rounded-xl border border-outline bg-surface-container-low pl-10 pr-4 py-2 text-sm" placeholder="Search automations..." />
-          <span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant">search</span>
-        </div>
-        <button class="icon-btn" title="Notifications">🔔</button>
-        <button class="icon-btn" title="Settings">⚙️</button>
-        <div class="h-8 w-px bg-outline"></div>
-        <div class="flex items-center gap-3">
-          <div class="text-right leading-tight">
-            <div class="text-sm font-semibold">Alex Rivera</div>
-            <div class="text-xs text-on-surface-variant">Pro Plan</div>
+<body>
+  <div id="app">
+    <section id="workspace-view" class="app-view active" aria-label="Workspace dashboard">
+      <aside class="workspace-sidebar">
+        <div class="brand-block">
+          <div class="brand-mark">
+            <span class="material-symbols-outlined" style="font-variation-settings:'FILL' 0;">deployed_code</span>
           </div>
-          <div class="w-9 h-9 rounded-full bg-surface-container-high grid place-items-center">👤</div>
-        </div>
-        <div id="tabs" class="hidden"></div>
-        <button id="btn-run" class="run-btn" title="Run all cells (⌘R)" disabled>Run</button>
-      </div>
-
-      <div id="editor-area" class="flex-1 overflow-y-auto p-8">
-        <div id="welcome-screen" class="h-full flex items-center justify-center">
-          <div class="w-full max-w-6xl">
-            <div class="mb-8">
-              <h1 class="text-5xl font-extrabold mb-2">Workspace</h1>
-              <p class="text-on-surface-variant text-lg">Manage your automation lifecycle from initial design to live execution.</p>
-            </div>
-            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-6">
-              <div class="rounded-2xl border border-outline bg-white p-6 shadow-sm">
-                <div class="flex items-center justify-between mb-3">
-                  <h3 class="text-2xl font-bold">All Projects</h3>
-                  <span class="text-xs px-2 py-1 rounded-full bg-emerald-100 text-emerald-700">Active</span>
-                </div>
-                <p class="text-on-surface-variant mb-4">Open existing `.tron` tasks or create new automation scripts.</p>
-                <div class="welcome-actions mt-2 flex gap-3">
-                  <button class="btn-primary" id="btn-welcome-new">New task</button>
-                  <button class="btn-secondary" id="btn-welcome-open">Browse</button>
-                </div>
-              </div>
-              <div class="rounded-2xl border border-outline bg-white p-6 shadow-sm">
-                <div class="flex items-center justify-between mb-3">
-                  <h3 class="text-2xl font-bold">CLI Marketplace</h3>
-                  <span class="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">Idle</span>
-                </div>
-                <p class="text-on-surface-variant">Install official CLI tools and expand automation capabilities.</p>
-              </div>
-              <div class="rounded-2xl border border-outline bg-primary text-white p-6 shadow-sm">
-                <h3 class="text-2xl font-bold mb-2">Start Automating</h3>
-                <p class="opacity-90">Use natural language to create end-to-end workflows.</p>
-              </div>
-            </div>
-            <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              <div class="lg:col-span-2 rounded-2xl border border-outline bg-white p-6">
-                <h3 class="text-2xl font-bold mb-2">Cloud Resource Sync</h3>
-                <p class="text-on-surface-variant mb-4">Synchronizing multi-cloud assets across AWS, Azure and GCP with automated tagging.</p>
-                <div class="flex gap-8 text-sm">
-                  <div><div class="text-3xl font-black text-primary">92%</div><div class="uppercase tracking-wider text-xs text-on-surface-variant">Sync Accuracy</div></div>
-                  <div><div class="text-3xl font-black text-secondary">24k</div><div class="uppercase tracking-wider text-xs text-on-surface-variant">Monthly Ops</div></div>
-                </div>
-              </div>
-              <div class="rounded-2xl border border-outline bg-white p-6">
-                <h4 class="text-xl font-bold mb-2">Quick Action</h4>
-                <p class="text-on-surface-variant mb-4">Create or open an automation project.</p>
-                <button class="btn-primary w-full">Create Project</button>
-              </div>
-            </div>
-            <div class="fixed bottom-6 left-1/2 -translate-x-1/2 rounded-full border border-outline bg-white/90 backdrop-blur px-6 py-3 shadow-lg flex items-center gap-4 text-sm">
-              <span class="px-2 py-1 rounded bg-surface-container-low font-bold">⌘</span>
-              <span class="px-2 py-1 rounded bg-surface-container-low font-bold">K</span>
-              <span class="uppercase tracking-widest text-on-surface-variant">Command Center</span>
-            </div>
+          <div>
+            <div class="brand-name">Scriptron</div>
+            <div class="brand-kicker">Automation Studio</div>
           </div>
         </div>
-      </div>
-    </main>
+
+        <button id="btn-new-project" class="primary-wide">
+          <span class="material-symbols-outlined">add</span>
+          <span>New Project</span>
+        </button>
+
+        <nav class="workspace-nav" aria-label="Workspace navigation">
+          <button class="workspace-nav-item active" type="button">
+            <span class="material-symbols-outlined">folder_open</span>
+            <span>All Projects</span>
+          </button>
+          <button class="workspace-nav-item" type="button">
+            <span class="material-symbols-outlined">share</span>
+            <span>Shared</span>
+          </button>
+          <button class="workspace-nav-item" type="button">
+            <span class="material-symbols-outlined">history</span>
+            <span>Recent</span>
+          </button>
+          <button class="workspace-nav-item" type="button">
+            <span class="material-symbols-outlined">archive</span>
+            <span>Archived</span>
+          </button>
+        </nav>
+
+        <div class="workspace-sidebar-footer">
+          <button class="workspace-nav-item subtle" type="button">
+            <span class="material-symbols-outlined">help</span>
+            <span>Help Center</span>
+          </button>
+          <button class="workspace-nav-item subtle" type="button">
+            <span class="material-symbols-outlined">logout</span>
+            <span>Log Out</span>
+          </button>
+        </div>
+      </aside>
+
+      <main class="workspace-main">
+        <header class="workspace-topbar">
+          <div class="search-control">
+            <span class="material-symbols-outlined">search</span>
+            <input type="search" placeholder="Search automations..." aria-label="Search automations" />
+          </div>
+          <div class="topbar-actions">
+            <button class="icon-btn notification-btn" title="Notifications" type="button">
+              <span class="material-symbols-outlined">notifications</span>
+            </button>
+            <button class="icon-btn" title="Settings" type="button">
+              <span class="material-symbols-outlined">settings</span>
+            </button>
+            <div class="topbar-divider"></div>
+            <div class="user-chip">
+              <div class="user-copy">
+                <strong>Alex Rivera</strong>
+                <span>Pro Plan</span>
+              </div>
+              <div class="avatar">AR</div>
+            </div>
+          </div>
+        </header>
+
+        <div class="workspace-content">
+          <div class="workspace-heading">
+            <div>
+              <h1>Workspace</h1>
+              <p>Manage your automation lifecycle from initial design to live execution.<br />Everything in one breathable space.</p>
+            </div>
+            <div class="share-cluster">
+              <div class="avatar-stack" aria-label="Workspace collaborators">
+                <span>JR</span>
+                <span>NS</span>
+                <span>+4</span>
+              </div>
+              <button class="ghost-action" type="button">
+                <span class="material-symbols-outlined">person_add</span>
+                <span>Share Workspace</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="project-grid">
+            <button class="project-card active-card" type="button" data-open-project>
+              <div class="card-topline">
+                <span class="project-icon mint"><span class="material-symbols-outlined">contact_mail</span></span>
+                <span class="status-pill active">Active</span>
+              </div>
+              <h2>Customer Onboarding</h2>
+              <p>Multi-stage pipeline for automated welcome emails and account provisioning.</p>
+              <div class="metric-row">
+                <span>Health Metric</span>
+                <strong>98% Success</strong>
+              </div>
+              <div class="progress-track"><span style="width:98%"></span></div>
+              <div class="card-footer">
+                <span class="material-symbols-outlined">schedule</span>
+                <span>Edited 2h ago</span>
+              </div>
+            </button>
+
+            <button class="project-card" type="button" data-open-project>
+              <div class="card-topline">
+                <span class="project-icon lavender"><span class="material-symbols-outlined">database</span></span>
+                <span class="status-pill idle">Idle</span>
+              </div>
+              <h2>Lead Enrichment</h2>
+              <p>RAG-powered data extraction from CRM and LinkedIn social profiles.</p>
+              <div class="metric-row">
+                <span>Health Metric</span>
+                <strong class="purple">100% Reliable</strong>
+              </div>
+              <div class="progress-track purple-track"><span style="width:100%"></span></div>
+              <div class="card-footer">
+                <span class="material-symbols-outlined">schedule</span>
+                <span>Edited 1d ago</span>
+              </div>
+            </button>
+
+            <button class="project-card draft-card" type="button" data-open-project>
+              <div class="card-topline">
+                <span class="project-icon sky"><span class="material-symbols-outlined">trending_up</span></span>
+                <span class="status-pill draft">Draft</span>
+              </div>
+              <h2>Market Pulse</h2>
+              <p>Analyzing weekly competitor pricing and inventory shifts.</p>
+              <div class="metric-row">
+                <span>Health Metric</span>
+                <strong class="muted">Unmonitored</strong>
+              </div>
+              <div class="progress-track muted-track"><span style="width:20%"></span></div>
+              <div class="card-footer">
+                <span class="material-symbols-outlined">schedule</span>
+                <span>Edited 4h ago</span>
+              </div>
+            </button>
+
+            <button class="project-card wide-card" type="button" data-open-project>
+              <div class="wide-copy">
+                <div class="wide-title-row">
+                  <span class="project-icon mint small"><span class="material-symbols-outlined">hub</span></span>
+                  <h2>Cloud Resource Sync</h2>
+                </div>
+                <p>Synchronizing multi-cloud assets across AWS, Azure and GCP environments with automated tagging and cost allocation.</p>
+                <div class="wide-metrics">
+                  <div><strong>92%</strong><span>Sync<br />Accuracy</span></div>
+                  <div><strong class="purple">24k</strong><span>Monthly<br />Operations</span></div>
+                </div>
+              </div>
+              <div class="wide-visual">
+                <span class="material-symbols-outlined">auto_graph</span>
+              </div>
+            </button>
+
+            <button class="start-card" type="button" id="btn-welcome-new">
+              <span class="start-plus"><span class="material-symbols-outlined">add_circle</span></span>
+              <strong>Start Automating</strong>
+              <span>Scale your productivity with a new custom node workflow.</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="command-center" role="group" aria-label="Command center shortcuts">
+          <span class="keycap">⌘</span>
+          <span class="keycap">K</span>
+          <strong>Command Center</strong>
+          <span class="command-divider"></span>
+          <button type="button"><span class="material-symbols-outlined">bolt</span> Quick Action</button>
+          <button type="button"><span class="material-symbols-outlined">history</span> View History</button>
+        </div>
+      </main>
+    </section>
+
+    <section id="project-view" class="app-view" aria-label="Project studio">
+      <aside id="sidebar" class="project-sidebar">
+        <div class="project-brand">
+          <button id="btn-back-workspace" class="project-mark" title="Back to workspace" type="button">
+            <span class="material-symbols-outlined">terminal</span>
+          </button>
+          <div>
+            <div class="project-name">Project Alpha</div>
+            <div class="project-path">/src/scripts</div>
+          </div>
+        </div>
+
+        <button id="btn-new-file" class="primary-wide script-button">
+          <span>New Script</span>
+        </button>
+
+        <nav id="sidebar-tabs" class="project-nav" aria-label="Project navigation">
+          <button class="sidebar-tab active" type="button" data-panel="files">
+            <span class="material-symbols-outlined">folder</span>
+            <span>Explorer</span>
+          </button>
+          <button class="sidebar-tab" type="button" data-panel="search">
+            <span class="material-symbols-outlined">search</span>
+            <span>Search</span>
+          </button>
+          <button class="sidebar-tab" type="button" data-panel="marketplace">
+            <span class="material-symbols-outlined">construction</span>
+            <span>Tool Nodes</span>
+          </button>
+          <button class="sidebar-tab" type="button" data-panel="rag">
+            <span class="material-symbols-outlined">database</span>
+            <span>RAG Nodes</span>
+          </button>
+          <button class="sidebar-tab" type="button" data-panel="history">
+            <span class="material-symbols-outlined">history</span>
+            <span>History</span>
+          </button>
+        </nav>
+
+        <div class="project-sidebar-footer">
+          <button class="sidebar-tab" type="button" data-panel="extensions">
+            <span class="material-symbols-outlined">extension</span>
+            <span>Extensions</span>
+          </button>
+          <button class="sidebar-tab" type="button" data-panel="settings">
+            <span class="material-symbols-outlined">settings</span>
+            <span>Settings</span>
+          </button>
+        </div>
+      </aside>
+
+      <main id="main" class="project-main">
+        <header id="tab-bar" class="project-topbar">
+          <button id="project-logo-link" class="project-title-button" type="button">Scriptron</button>
+          <div id="tabs" class="file-tabs" aria-label="Open files"></div>
+          <div class="project-actions">
+            <button class="icon-btn" title="Share" type="button">
+              <span class="material-symbols-outlined">share</span>
+            </button>
+            <button class="icon-btn" title="Settings" type="button" data-panel-jump="settings">
+              <span class="material-symbols-outlined">settings</span>
+            </button>
+            <div class="topbar-divider"></div>
+            <button id="btn-debug" class="debug-btn" type="button">Debug</button>
+            <button id="btn-run" class="run-btn" title="Run all cells (⌘R)" type="button" disabled>
+              <span class="material-symbols-outlined">play_arrow</span>
+              <span>Run</span>
+            </button>
+            <div class="avatar small-avatar">AR</div>
+          </div>
+        </header>
+
+        <div id="project-panels" class="project-panels">
+          <section id="panel-files" class="sidebar-panel studio-panel active" aria-label="Explorer">
+            <div class="studio-panel-header">
+              <div>
+                <div class="eyebrow">Script Workspace</div>
+                <h1>Explorer</h1>
+              </div>
+              <button class="ghost-action" type="button" id="btn-welcome-open">
+                <span class="material-symbols-outlined">folder_open</span>
+                <span>Browse Files</span>
+              </button>
+            </div>
+            <div class="explorer-layout">
+              <aside class="explorer-card">
+                <div class="panel-header">
+                  <span>Project Files</span>
+                </div>
+                <div id="file-tree"></div>
+              </aside>
+              <div class="editor-shell">
+                <div id="editor-area">
+                  <div id="welcome-screen">
+                    <div class="empty-state">
+                      <span class="material-symbols-outlined">edit_document</span>
+                      <h2>Create or open a script</h2>
+                      <p>Use natural language cells to describe the automation, then run it from the top bar.</p>
+                      <button class="btn-primary" type="button" id="btn-editor-new">New Script</button>
+                    </div>
+                  </div>
+                </div>
+                <section id="exec-panel" class="collapsed" aria-label="Execution log">
+                  <div id="exec-header">
+                    <div id="exec-title">
+                      <span id="exec-status-dot" class="status-dot idle"></span>
+                      <span>Execution Log</span>
+                    </div>
+                    <div id="exec-controls">
+                      <button id="btn-clear-log" class="icon-btn" title="Clear log" type="button">
+                        <span class="material-symbols-outlined">delete</span>
+                      </button>
+                      <svg id="toggle-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <polyline points="6 9 12 15 18 9"></polyline>
+                      </svg>
+                    </div>
+                  </div>
+                  <div id="exec-log"></div>
+                </section>
+              </div>
+            </div>
+          </section>
+
+          <section id="panel-search" class="sidebar-panel studio-panel" aria-label="Search">
+            <div class="studio-panel-header">
+              <div>
+                <div class="eyebrow">Project Index</div>
+                <h1>Search</h1>
+              </div>
+            </div>
+            <div class="placeholder-panel">
+              <span class="material-symbols-outlined">search</span>
+              <h2>Project search is ready for indexing</h2>
+              <p>Search will cover scripts, generated outputs, run history, and blackboard entries.</p>
+            </div>
+          </section>
+
+          <section id="panel-marketplace" class="sidebar-panel studio-panel node-panel" aria-label="Node Library">
+            <div class="studio-panel-header library-header">
+              <div>
+                <div class="eyebrow">Configuration Hub</div>
+                <h1>Node Library</h1>
+                <p>Reference and configure your automation building blocks. Scriptron nodes are separated into Tools for actions and knowledge units for retrieval.</p>
+              </div>
+              <button id="btn-install-local" class="ghost-action" type="button">
+                <span class="material-symbols-outlined">add</span>
+                <span>Install Local</span>
+              </button>
+            </div>
+
+            <div class="section-line">
+              <h2>Tool Nodes</h2>
+              <span></span>
+              <strong>3 Active Units</strong>
+            </div>
+
+            <div class="node-card-grid">
+              <article class="node-card">
+                <span class="node-icon mint"><span class="material-symbols-outlined">search</span></span>
+                <h3>Web Search</h3>
+                <p>Execute real-time queries across specified search engines for up-to-date data retrieval.</p>
+                <div class="tag-row"><span>API-V3</span><span>Latency-Low</span></div>
+              </article>
+              <article class="node-card">
+                <span class="node-icon mint"><span class="material-symbols-outlined">api</span></span>
+                <h3>REST API</h3>
+                <p>Generic HTTP client supporting GET, POST, PUT, and DELETE with custom header mapping.</p>
+                <div class="tag-row"><span>JSON</span><span>Auth-Enabled</span></div>
+              </article>
+              <article class="node-card">
+                <span class="node-icon mint"><span class="material-symbols-outlined">mail</span></span>
+                <h3>Notification</h3>
+                <p>Dispatch automated emails or Slack notifications based on script logic triggers.</p>
+                <div class="tag-row"><span>SMTP</span><span>HTML-Ready</span></div>
+              </article>
+            </div>
+
+            <div class="section-line rag-line">
+              <h2>RAG Nodes</h2>
+              <span></span>
+              <strong>Knowledge Bases</strong>
+            </div>
+
+            <div class="rag-grid">
+              <article class="rag-hero">
+                <span class="node-icon purple-bg"><span class="material-symbols-outlined">database</span></span>
+                <h3>Enterprise Knowledge Base</h3>
+                <p>Connect internal wikis, Notion pages, and PDF repositories for context-aware script execution.</p>
+              </article>
+              <div class="rag-side">
+                <article class="rag-mini">
+                  <div class="card-topline">
+                    <span class="node-icon lavender"><span class="material-symbols-outlined">menu_book</span></span>
+                    <span class="status-pill idle">Synced</span>
+                  </div>
+                  <h3>Doc Search</h3>
+                  <p>Query project documentation and help files.</p>
+                  <div class="progress-track purple-track"><span style="width:84%"></span></div>
+                </article>
+                <article class="rag-mini disabled">
+                  <div class="card-topline">
+                    <span class="node-icon lavender"><span class="material-symbols-outlined">description</span></span>
+                    <span class="status-pill error">Offline</span>
+                  </div>
+                  <h3>Policy Index</h3>
+                  <p>Waiting for a document source.</p>
+                </article>
+              </div>
+            </div>
+
+            <div class="installed-library">
+              <div class="section-line compact">
+                <h2>Registry</h2>
+                <span></span>
+                <strong>Installable Tools</strong>
+              </div>
+              <div id="marketplace-list"></div>
+            </div>
+          </section>
+
+          <section id="panel-rag" class="sidebar-panel studio-panel" aria-label="RAG Nodes">
+            <div class="studio-panel-header">
+              <div>
+                <div class="eyebrow">Knowledge Units</div>
+                <h1>RAG Nodes</h1>
+                <p>Current architecture keeps documents lightweight; this view prepares document search and knowledge node management.</p>
+              </div>
+            </div>
+            <div class="placeholder-panel">
+              <span class="material-symbols-outlined">database</span>
+              <h2>Knowledge nodes are staged</h2>
+              <p>Use Node Library for installable tools while memory and document references are implemented.</p>
+            </div>
+          </section>
+
+          <section id="panel-history" class="sidebar-panel studio-panel" aria-label="History">
+            <div class="studio-panel-header">
+              <div>
+                <div class="eyebrow">Run Archive</div>
+                <h1>History</h1>
+                <p>Replay recent runs, inspect blackboard entries, and jump back into the live execution log.</p>
+              </div>
+            </div>
+            <div class="history-grid">
+              <article class="history-card">
+                <h2>Recent Activity</h2>
+                <p>Run history will persist completed executions and blackboard artifacts as the runtime grows.</p>
+                <div class="history-timeline">
+                  <div class="history-event">
+                    <span class="material-symbols-outlined">task_alt</span>
+                    <div>
+                      <strong>Customer onboarding draft prepared</strong>
+                      <p>Two run cells and one note cell staged for execution.</p>
+                    </div>
+                    <span>2h ago</span>
+                  </div>
+                  <div class="history-event">
+                    <span class="material-symbols-outlined">sync</span>
+                    <div>
+                      <strong>CLI registry refreshed</strong>
+                      <p>Tool nodes were reconciled against the local registry.</p>
+                    </div>
+                    <span>1d ago</span>
+                  </div>
+                  <div class="history-event">
+                    <span class="material-symbols-outlined">database</span>
+                    <div>
+                      <strong>Blackboard snapshot saved</strong>
+                      <p>Latest execution events are ready for audit replay.</p>
+                    </div>
+                    <span>3d ago</span>
+                  </div>
+                </div>
+              </article>
+              <aside class="run-summary-card">
+                <h2>Live Execution</h2>
+                <p>The active log still lives with the editor so it can stay attached to the current script context.</p>
+                <div class="run-summary-actions">
+                  <button id="btn-open-live-log" class="btn-primary" type="button">Open Live Log</button>
+                  <button id="btn-history-new-run" class="btn-secondary" type="button">New Script</button>
+                </div>
+              </aside>
+            </div>
+          </section>
+
+          <section id="panel-extensions" class="sidebar-panel studio-panel" aria-label="Extensions">
+            <div class="studio-panel-header">
+              <div>
+                <div class="eyebrow">Configuration</div>
+                <h1>Extensions</h1>
+              </div>
+            </div>
+            <div class="placeholder-panel">
+              <span class="material-symbols-outlined">extension</span>
+              <h2>Extensions share the Node Library system</h2>
+              <p>Install and configure automation capabilities from Tool Nodes.</p>
+            </div>
+          </section>
+
+          <section id="panel-settings" class="sidebar-panel studio-panel settings-panel" aria-label="Settings">
+            <div class="studio-panel-header">
+              <div>
+                <div class="eyebrow">Preferences</div>
+                <h1>Settings</h1>
+                <p>Configure model providers, project blackboard, and local execution preferences.</p>
+              </div>
+            </div>
+            <div id="settings-content"></div>
+          </section>
+        </div>
+
+        <footer class="statusbar">
+          <span><span class="material-symbols-outlined">terminal</span> Python 3.10</span>
+          <span><span class="material-symbols-outlined">draft</span> UTF-8</span>
+          <span><span class="material-symbols-outlined">navigation</span> Line 12, Col 4</span>
+          <span class="connected"><span class="material-symbols-outlined">cloud_done</span> Connected</span>
+        </footer>
+      </main>
+    </section>
   </div>
 
   <div id="modal-overlay" class="hidden">
@@ -149,8 +518,8 @@
       <div id="modal-title"></div>
       <div id="modal-body"></div>
       <div id="modal-footer">
-        <button id="modal-cancel" class="btn-secondary">Cancel</button>
-        <button id="modal-confirm" class="btn-primary">Confirm</button>
+        <button id="modal-cancel" class="btn-secondary" type="button">Cancel</button>
+        <button id="modal-confirm" class="btn-primary" type="button">Confirm</button>
       </div>
     </div>
   </div>

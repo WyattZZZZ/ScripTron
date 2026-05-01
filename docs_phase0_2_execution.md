@@ -1,5 +1,7 @@
 # Phase 0-2 执行记录（2026-04-30）
 
+> 说明：本记录是旧版 UI 重构尝试的历史验收。由于当前主 UI 需要根据新的 Workspace Dashboard 与 Project Studio 参考图重做，后续开发以 `docs_ui_task.md` 中重写后的 Phase 0-6 为准。
+
 ## Phase 0 基线与回归
 - 基线场景：
   - 欢迎页（无打开文件）

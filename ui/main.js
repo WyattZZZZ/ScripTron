@@ -51,6 +51,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupWelcomeButtons();
   setupNewFileButton();
   setupInstallLocalButton();
+  setupViewNavigation();
+  setupWorkspaceFilters();
+  setupCommandCenter();
+  setupHistoryActions();
+  setupInitialViewFromHash();
 
   Editor.setOnDirty(() => markCurrentTabDirty());
 
@@ -63,12 +68,137 @@ function setupSidebarTabs() {
   document.querySelectorAll('.sidebar-tab').forEach(btn => {
     btn.addEventListener('click', () => {
       const target = btn.dataset.panel;
+      const panel = document.getElementById(`panel-${target}`);
+      if (!panel) return;
       document.querySelectorAll('.sidebar-tab').forEach(b => b.classList.remove('active'));
       document.querySelectorAll('.sidebar-panel').forEach(p => p.classList.remove('active'));
       btn.classList.add('active');
-      document.getElementById(`panel-${target}`).classList.add('active');
+      panel.classList.add('active');
     });
   });
+}
+
+function setupViewNavigation() {
+  document.querySelectorAll('[data-open-project]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      showProjectView('marketplace');
+    });
+  });
+
+  document.getElementById('btn-back-workspace')?.addEventListener('click', () => {
+    showWorkspaceView();
+  });
+
+  document.getElementById('project-logo-link')?.addEventListener('click', () => {
+    showProjectView('marketplace');
+  });
+
+  document.querySelectorAll('[data-panel-jump]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      showProjectView(btn.dataset.panelJump);
+    });
+  });
+}
+
+function setupInitialViewFromHash() {
+  const hash = window.location.hash;
+  if (hash === '#project') {
+    showProjectView('marketplace');
+  } else if (hash === '#editor') {
+    showProjectView('files');
+    loadPreviewScript();
+  } else if (hash === '#settings') {
+    showProjectView('settings');
+  } else if (hash === '#history') {
+    showProjectView('history');
+  }
+}
+
+function showWorkspaceView() {
+  document.getElementById('workspace-view')?.classList.add('active');
+  document.getElementById('project-view')?.classList.remove('active');
+}
+
+function showProjectView(panel = 'files') {
+  document.getElementById('workspace-view')?.classList.remove('active');
+  document.getElementById('project-view')?.classList.add('active');
+  activateProjectPanel(panel);
+}
+
+function activateProjectPanel(panel) {
+  const targetPanel = document.getElementById(`panel-${panel}`);
+  if (!targetPanel) return;
+  document.querySelectorAll('.sidebar-tab').forEach(b => {
+    b.classList.toggle('active', b.dataset.panel === panel);
+  });
+  document.querySelectorAll('.sidebar-panel').forEach(p => p.classList.remove('active'));
+  targetPanel.classList.add('active');
+}
+
+function setupWorkspaceFilters() {
+  document.querySelectorAll('.workspace-nav-item').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const group = btn.closest('.workspace-nav');
+      if (!group) return;
+      group.querySelectorAll('.workspace-nav-item').forEach(item => item.classList.remove('active'));
+      btn.classList.add('active');
+    });
+  });
+}
+
+function setupCommandCenter() {
+  document.querySelector('.command-center button:first-of-type')?.addEventListener('click', () => {
+    showProjectView('files');
+    showNewFileModal();
+  });
+  document.querySelector('.command-center button:last-of-type')?.addEventListener('click', () => {
+    showProjectView('history');
+  });
+  document.getElementById('btn-debug')?.addEventListener('click', () => {
+    showProjectView('files');
+    expandExecPanel();
+  });
+}
+
+function setupHistoryActions() {
+  document.getElementById('btn-open-live-log')?.addEventListener('click', () => {
+    showProjectView('files');
+    expandExecPanel();
+  });
+  document.getElementById('btn-history-new-run')?.addEventListener('click', () => {
+    showProjectView('files');
+    showNewFileModal();
+  });
+}
+
+function loadPreviewScript() {
+  if (isTauri || openTabs.length > 0) return;
+  const tab = {
+    path: '/preview/customer_onboarding.tron',
+    name: 'Main.script',
+    dirty: false,
+    blackboard: { entries: [], notes: [] },
+    cells: [
+      {
+        run: false,
+        content: 'Goal: prepare a customer onboarding workflow that sends a welcome email, creates account tasks, and records the provisioning checklist.',
+      },
+      {
+        run: true,
+        content: 'Draft the welcome email sequence for a new Pro Plan customer. Keep the tone concise, warm, and action-oriented.',
+      },
+      {
+        run: true,
+        content: 'Create a provisioning checklist with owner, due date, and success criteria for each step.',
+      },
+    ],
+  };
+  openTabs = [tab];
+  activeTab = 0;
+  Editor.load(tab.path, tab.cells);
+  renderTabs();
+  appendLog({ type: 'thinking', content: 'Preview log ready. Run a script to stream live events here.' });
+  setStatusDot('idle');
 }
 
 // ── File tree ─────────────────────────────────────────────────────────────────
@@ -171,6 +301,7 @@ async function openFile(path, name) {
     await saveCurrentTab();
     activeTab = openTabs.length - 1;
     Editor.load(tab.path, tab.cells);
+    showProjectView('files');
     renderTabs();
     refreshFileTree();
     document.getElementById('btn-run').disabled = isRunning;
@@ -218,9 +349,19 @@ function markCurrentTabDirty() {
 // ── New file ──────────────────────────────────────────────────────────────────
 function setupNewFileButton() {
   document.getElementById('btn-new-file').addEventListener('click', () => {
+    showProjectView('files');
     showNewFileModal();
   });
   document.getElementById('btn-welcome-new').addEventListener('click', () => {
+    showProjectView('files');
+    showNewFileModal();
+  });
+  document.getElementById('btn-new-project')?.addEventListener('click', () => {
+    showProjectView('files');
+    showNewFileModal();
+  });
+  document.getElementById('btn-editor-new')?.addEventListener('click', () => {
+    showProjectView('files');
     showNewFileModal();
   });
 }
@@ -252,11 +393,7 @@ function showNewFileModal() {
 
 function setupWelcomeButtons() {
   document.getElementById('btn-welcome-open').addEventListener('click', async () => {
-    // Switch sidebar to files panel
-    document.querySelectorAll('.sidebar-tab').forEach(b => b.classList.remove('active'));
-    document.querySelectorAll('.sidebar-panel').forEach(p => p.classList.remove('active'));
-    document.querySelector('[data-panel="files"]').classList.add('active');
-    document.getElementById('panel-files').classList.add('active');
+    showProjectView('files');
   });
 }
 

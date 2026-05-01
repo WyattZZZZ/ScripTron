@@ -1,7 +1,7 @@
-# ScripTron UI 长任务（Tailwind + Manrope 主题重构）
+# ScripTron UI 长任务（Workspace + Project Studio 重构）
 
 ## 目标
-将当前 `ui/index.html + ui/style.css` 的深色 IDE 风格界面，重构为你提供的浅色「Workspace Dashboard」视觉体系，同时尽量保留现有产品核心能力（文件树、编辑区、执行日志、Marketplace、Settings）。
+当前主 UI 存在信息层级、导航归属、视觉一致性与工作流表达问题。重新以两张参考图为准，重构为浅色「Workspace Dashboard + Project Studio」双层产品结构，同时保留现有核心能力（项目、文件树、编辑区、运行、日志、Marketplace/Node Library、Settings）。
 
 > 当前优先级调整：先把软件核心体验做扎实（编辑、运行、blackboard、项目流转），CLI 生态扩展后置。
 
@@ -9,113 +9,189 @@
 
 ## 总体策略
 
-- **不一次性推倒重来**，采用「分阶段迁移」：
-  1. 先引入新设计 token（颜色、字体、圆角、阴影）；
-  2. 再做布局替换（Sidebar / Topbar / Canvas）；
-  3. 最后把业务组件映射到新卡片化风格。
-- **保留原有 DOM id 与关键数据挂载点**（例如 `#file-tree`、`#tabs`、`#editor-area`、`#exec-log`），降低 JS 逻辑改造成本。
-- **建立兼容层**：先让旧 class 与新 class 并行一段时间，避免一次改动过大导致功能不可用。
+- **双层信息架构**：
+  1. Workspace 层：项目总览、搜索、协作入口、最近活动、创建自动化。
+  2. Project Studio 层：当前项目、脚本标签、Explorer/Search/Tool Nodes/RAG Nodes/History、Run/Debug、底部状态栏。
+- **视觉基准以参考图为准**：
+  - 浅灰应用背景，白色/浅灰内容卡片，深青绿色作为主操作色，紫色作为知识/RAG 辅助色。
+  - 大面积留白、宽 Sidebar、强标题层级、圆角卡片、轻阴影、细分割线。
+  - 图标优先，文本只用于必要导航与业务内容。
+- **代码迁移策略**：
+  - 保留关键 DOM id 与数据挂载点（例如 `#file-tree`、`#tabs`、`#editor-area`、`#exec-log`），但允许外层布局重写。
+  - 先做静态壳层与路由状态，再接回现有 JS 事件。
+  - Workspace 与 Project Studio 共用 token、按钮、卡片、状态徽标、顶部栏与 Sidebar 组件。
 
 ---
 
 ## 里程碑拆解（Long Task）
 
-## Phase 0：基线冻结与可视回归（0.5 天）
-- [x] 保存当前 UI 截图基线（欢迎页、打开文件态、运行日志展开/折叠态）。
-- [x] 标注关键交互流程：
-  - 新建文件
-  - 打开/切换标签
-  - Run 执行
-  - 查看 log
-  - Marketplace 安装
-  - Settings 切换 provider
-- [x] 添加最小视觉回归脚本（可选 Playwright）。
+## Phase 0：问题复盘与参考图拆解（0.5 天）
+- [ ] 保存当前主 UI 截图，记录现有问题：
+  - [ ] Workspace/Project/Editor/Marketplace 边界不清。
+  - [ ] 主导航与当前任务状态不够明显。
+  - [ ] 卡片密度、按钮层级、日志区域和编辑区域视觉不统一。
+  - [ ] 运行态、空状态、错误态、加载态缺少同一套语言。
+- [ ] 拆解参考图 1：Workspace Dashboard。
+  - [ ] 左侧品牌区：logo、Scriptron、Automation Studio。
+  - [ ] 顶部搜索：Search automations。
+  - [ ] 右侧工具区：通知、设置、用户信息。
+  - [ ] 主内容：Workspace 标题、协作头像、项目卡片、Start Automating CTA、底部 Command Center。
+- [ ] 拆解参考图 2：Project Studio / Node Library。
+  - [ ] 左侧项目 Sidebar：Project Alpha、New Script、Explorer/Search/Tool Nodes/RAG Nodes/History、Extensions/Settings。
+  - [ ] 顶部栏：Scriptron、文件标签、Share/Settings、Debug、Run、头像。
+  - [ ] 主内容：Node Library、Tool Nodes、RAG Nodes、状态栏。
+- [ ] 列出必须保留的产品能力与 DOM 锚点。
 
 **验收标准**
-- 任何后续改版都可对照同场景截图。
+- 输出一份可对照的 UI 问题清单与参考图组件清单。
+- 明确 Workspace 层与 Project Studio 层的切换关系。
 
 ---
 
-## Phase 1：设计系统底座（1 天）
-- [x] 迁移颜色 token 到 CSS 变量（基于你给的 Tailwind 颜色命名）：
-  - `--primary`, `--surface-container-low`, `--on-surface-variant` 等。
-- [x] 引入 `Manrope` 字体；补充数字与等宽字体回退策略。
-- [x] 定义统一间距、圆角、阴影、边框 token。
-- [x] 增加浅色为默认、深色可选（`html.light / html.dark`）双主题结构。
+## Phase 1：视觉系统重建（1 天）
+- [x] 重新定义浅色设计 token：
+  - [x] Background：应用背景使用冷浅灰，不使用纯白铺满。
+  - [x] Surface：白色主卡片、浅灰二级卡片、淡青激活态、淡紫 RAG 态。
+  - [x] Primary：深青绿色，用于 New Project/New Script/Run/CTA。
+  - [x] Accent：紫色，用于 RAG、可靠性、知识库进度。
+  - [x] Text：标题近黑，正文冷灰，辅助信息大写小字母间距。
+- [x] 字体系统统一为 Manrope 优先，代码/日志使用等宽回退。
+- [x] 组件 token：
+  - [x] 卡片圆角 20-24px，内部控件圆角 10-14px。
+  - [x] Sidebar 宽度约 320px，主内容最大宽度按视口伸展。
+  - [x] 阴影只用于浮层、主卡片与 Command Center。
+  - [x] 分割线使用低对比边框，不使用重边框。
+- [x] 图标策略：
+  - [x] 使用现有图标库或 Material Symbols，按钮内优先图标。
+  - [x] 关键图标需要统一线宽、尺寸与颜色。
 
 **验收标准**
-- 全局无需改 DOM，仅替换变量即可让页面从旧暗色切到新浅色语义色。
+- 仅看空壳页面时，视觉应接近两张参考图：浅色、通透、克制、深青主色明确。
+- token 能支撑 Workspace 卡片、Project Sidebar、Node Library、Editor、日志面板共用。
 
 ---
 
-## Phase 2：壳层布局重构（1~1.5 天）
-- [x] Sidebar 改成新视觉：品牌区、新建按钮、导航分组、底部帮助区。
-- [x] Main 区增加 Topbar（搜索、通知、设置、用户信息）。
-- [x] 保持现有业务容器 id：
-  - `#file-tree` 挂到 “All Projects” 容器
-  - `#panel-marketplace`、`#panel-settings` 改为页面内二级分区
-- [x] 适配窗口高度与滚动策略（Sidebar 独立滚动，主内容滚动）。
+## Phase 2：Workspace Dashboard 重做（1~1.5 天）
+- [x] 实现 Workspace 顶层布局。
+  - [x] 左侧固定 Sidebar：品牌、New Project、All Projects/Shared/Recent/Archived、Help Center/Log Out。
+  - [x] 顶部栏：搜索框、通知、设置、用户资料。
+  - [x] 主区域：Workspace 标题、说明文案、协作头像、Share Workspace。
+- [x] 项目卡片体系。
+  - [x] 普通项目卡：图标、状态徽标、标题、描述、Health Metric、进度条、更新时间。
+  - [x] Draft/Idle/Active 状态分别使用低饱和徽标。
+  - [x] 大横向项目卡：关键指标、插图区、同步/运行摘要。
+  - [x] Start Automating CTA：深青背景、居中加号、短文案。
+- [x] 底部 Command Center。
+  - [x] 居中浮动胶囊，包含快捷键、Quick Action、View History。
+  - [x] 保持不遮挡主要内容，窄屏时收缩。
+- [ ] 交互映射。
+  - [x] New Project 进入项目创建流程。
+  - [x] 点击项目卡进入 Project Studio。
+  - [ ] All Projects/Recent/Archived 过滤项目列表。
 
 **验收标准**
-- 新布局可正常显示且核心按钮可点击。
-
-### Phase 0~2 完成说明（2026-04-30）
-
-- 已完成浅色主题 token 迁移、字体切换、Tailwind 主题注入及双主题 class 基础。
-- 已完成壳层重构，保留关键挂载点：`#file-tree`、`#tabs`、`#editor-area`、`#exec-log`。
-- 已完成执行日志区域的交互回归修正（含 `toggle-icon`）。
-- 已完成黑板（blackboard）隐式持久化接入，保证后续 Phase 3 可以直接消费运行历史。
+- 打开应用默认进入 Workspace。
+- 第一屏能明确表达“自动化项目管理工作台”，不再像编辑器或设置页。
+- 项目卡、CTA、Command Center 在桌面宽度下与参考图 1 构图一致。
 
 ---
 
-## Phase 3：编辑器与执行面板样式重做（1.5~2 天）
-- [x] 将 `#tab-bar` 改为轻量胶囊/卡片标签风格。
-- [x] `Run` 按钮改为主题主按钮（含运行中态、禁用态）。
-- [x] Cell 组件改为浅色卡片体系：
-  - Header 的 run/static badge 改新语义色
-  - hover/focus 阴影统一
-- [x] `#exec-panel` 改为玻璃态/卡片态可折叠日志抽屉。
-- [x] Log 条目按类型重着色（thinking/tool_call/success/fail/error）。
+## Phase 3：Project Studio 壳层重做（1~1.5 天）
+- [x] 实现项目工作台布局。
+  - [x] 左侧 Project Sidebar：项目图标、项目名、路径、New Script。
+  - [x] 导航项：Explorer、Search、Tool Nodes、RAG Nodes、History。
+  - [x] 底部项：Extensions、Settings。
+  - [x] 当前导航使用深青文字、图标和右侧竖线指示。
+- [x] 顶部文件栏。
+  - [x] 左侧显示 Scriptron 与打开文件标签：Main.script、Utils.py、Data.json 等。
+  - [x] 右侧显示 Share、Settings、Debug、Run、用户头像。
+  - [x] Run 按钮为深青主按钮，Debug 为低调文本按钮。
+- [x] 底部状态栏。
+  - [x] 显示运行环境、编码、光标位置、连接状态。
+  - [x] 状态栏固定底部，不挤压主内容。
+- [x] 保留现有编辑器挂载点。
+  - [x] `#file-tree` 放入 Explorer 面板。
+  - [x] `#tabs` 映射到顶部文件标签。
+  - [x] `#editor-area` 保留在编辑视图中。
+  - [x] `#exec-log` 映射到 History/运行抽屉。
 
 **验收标准**
-- 编辑、运行、日志三条主链路体验完整，视觉统一。
+- 点击 Workspace 项目卡后进入 Project Studio。
+- 项目侧栏、顶部文件栏、底部状态栏与参考图 2 构图一致。
+- Run、Debug、文件切换、Explorer 不破坏现有功能。
 
 ---
 
-## Phase 4：Marketplace / Settings 卡片化（1 天）
-- [x] `tool-card` 升级为 dashboard 卡片（状态、版本、操作按钮层次优化）。
-- [x] provider-card 采用新卡片视觉 + 激活态强调。
-- [x] 表单控件（select/input/textarea）统一为轻量面板风格。
-- [x] CLI 市场数据源切换为公开 GitHub Registry 仓库：
-  - [x] 打开市场时实时拉取 registry 清单（manifest 列表）。
-  - [x] 展示按平台可安装状态（macOS/Linux）。
-  - [x] 安装时执行仓库内对应安装脚本并显示安装日志。
-  - [x] 安装后自动触发 skill 生成与可用性校验。
+## Phase 4：Node Library / Marketplace 重做（1~1.5 天）
+- [x] 将 Marketplace 重命名或映射为 Node Library 视图。
+- [x] Tool Nodes 区。
+  - [x] 标题行：Tool Nodes、细分割线、右侧 active units。
+  - [x] 三列工具卡：Web Search、REST API、Notification。
+  - [x] 每张卡包含图标、标题、描述、能力标签。
+  - [x] 工具卡使用浅灰卡片，不使用强边框。
+- [x] RAG Nodes 区。
+  - [x] 大型 Enterprise Knowledge Base 卡：紫色渐变、图标、标题、描述。
+  - [x] 右侧知识库小卡：Doc Search、状态徽标、进度条。
+  - [x] 保留离线/同步/错误状态样式。
+- [ ] 安装与配置流程。
+  - [x] 未安装节点显示 Install/Configure。
+  - [x] 已安装节点显示 Synced/Active/Offline。
+  - [ ] 安装日志进入运行记录与 blackboard。
 
 **验收标准**
-- Marketplace 与 Settings 视觉风格与主界面一致。
-- Marketplace 可直接从公开 GitHub 仓库完成“发现→安装→可调用”闭环。
+- Node Library 页面视觉接近参考图 2。
+- Tool Nodes 与 RAG Nodes 区分清楚，不再混成普通设置页。
+- 现有 registry/安装流程可从新卡片入口触发。
 
 ---
 
-## Phase 5：微交互与可访问性（1 天）
-- [x] Hover/active/focus ring 统一动画时长（150~250ms）。
-- [x] 键盘可达性：Tab 顺序、Enter/Space 操作、Esc 关闭 modal。
-- [x] 对比度校正（尤其 `on-surface-variant` 文本）。
-- [x] 减少动画模式支持（prefers-reduced-motion）。
+## Phase 5：编辑器、运行日志与状态体验统一（1~1.5 天）
+- [x] 编辑器视图按 Project Studio 风格重排。
+  - [x] Explorer 与文件标签保持参考图 2 的导航语言。
+  - [x] Cell/Script 编辑区使用浅色代码面板，不做厚重 IDE 暗色。
+  - [x] 空状态引导创建 New Script。
+- [ ] 运行体验。
+  - [x] Run 按钮支持 ready/running/disabled 状态。
+  - [x] Debug 与 Run 行为区分清楚。
+  - [x] 执行日志可从 History 导航或抽屉打开。
+  - [ ] success/error 顶层运行态需要进一步同步到顶部栏。
+- [ ] 日志样式。
+  - [x] thinking/tool_call/success/fail/error 使用统一状态色。
+  - [ ] blackboard 产物以可折叠条目展示。
+  - [ ] 错误态提供重试与查看详情入口。
+- [ ] Settings/Extensions。
+  - [x] 与 Project Sidebar 底部入口一致。
+  - [x] 表单、provider-card、API key 输入框全部套用新 token。
+  - [ ] Extensions 需要接入真实扩展列表。
 
 **验收标准**
-- 可访问性扫描无严重错误，交互手感一致。
+- 编辑、运行、日志三条主链路能在新 Project Studio 中完整闭环。
+- 错误、空、加载、运行中状态都有一致视觉，不再临时拼接。
 
 ---
 
-## Phase 6：收尾与发布（0.5~1 天）
-- [x] 清理兼容样式（删除旧 class 冗余）。
-- [x] 补齐 UI 文档：色板、组件说明、状态规范。
-- [x] 回归测试 + 打包验证（Tauri 多平台）。
+## Phase 6：响应式、可访问性与回归发布（0.5~1 天）
+- [ ] 响应式适配。
+  - [ ] 桌面宽屏按参考图构图完整展示。
+  - [ ] 中等宽度下卡片从三列降为两列，Sidebar 可收起。
+  - [ ] 小宽度下 Workspace 和 Project Studio 仍可完成核心操作。
+- [ ] 可访问性与微交互。
+  - [ ] Tab 顺序覆盖 Sidebar、Topbar、卡片、编辑器、日志。
+  - [ ] Enter/Space 激活主要按钮，Esc 关闭抽屉/弹窗。
+  - [ ] hover/active/focus/running 动画统一 150-250ms。
+  - [ ] 支持 prefers-reduced-motion。
+- [ ] 视觉回归。
+  - [ ] 截图场景：Workspace、Project Studio Explorer、Node Library、Editor、Run Log、Settings。
+  - [ ] 检查文本不溢出、不重叠，卡片高度稳定。
+  - [ ] Tauri dev 与 build 验证。
+- [ ] 清理旧 UI。
+  - [ ] 删除不再使用的深色 IDE 兼容样式。
+  - [ ] 补齐 UI 规范文档：token、组件、状态、页面结构。
 
 **验收标准**
-- 无功能回退；样式技术债可控。
+- Phase 0-6 重新验收后，主 UI 不再沿用有问题的旧结构。
+- 两张参考图对应的 Workspace 与 Project Studio 都有可运行实现。
+- 进入 Phase 7 之前，基础产品壳层稳定。
 
 ---
 
@@ -219,39 +295,56 @@
 
 ## 技术实现建议
 
-1. **是否直接引入 Tailwind CDN？**
-   - Tauri 本地可用，但生产更建议本地构建 Tailwind（可控、可离线、可裁剪）。
-2. **推荐路径**
-   - 第一步先用现有 `style.css` 实现你这套主题 token；
-   - 第二步再决定是否切换 Tailwind 工程化。
-3. **图标**
-   - `material-symbols-outlined` 可用，但建议给关键操作保留 SVG fallback。
-4. **性能**
-   - 控制 blur/glass 使用范围，避免大面积 `backdrop-filter` 导致渲染压力。
+1. **页面状态先行**
+   - 先在前端建立 `workspace | project` 两个顶层 view state，再逐步接回真实数据。
+   - Workspace 负责项目列表与创建入口；Project Studio 负责脚本、节点、运行与设置。
+2. **样式拆分**
+   - 建议从单个 `ui/style.css` 拆成 `theme.css + layout.css + components.css`，再按需要迁移。
+   - 若暂时不拆文件，也必须按 token/layout/component/view 顺序组织 CSS。
+3. **组件优先级**
+   - 先做 Shell：Sidebar、Topbar、Statusbar、Command Center。
+   - 再做 Card：project-card、node-card、rag-card、metric-card、log-item。
+   - 最后做业务视图：Workspace、Node Library、Editor、Settings。
+4. **图标与插图**
+   - 导航和按钮优先使用图标库图标，保持统一线宽。
+   - Workspace 项目卡里的插图只做低对比装饰，不抢内容层级。
+5. **性能**
+   - 少用大面积 `backdrop-filter`；参考图里的通透感主要依赖浅色层级、阴影和留白。
+   - 卡片 hover 只改变阴影、边框或轻微位移，避免布局跳动。
 
 ---
 
 ## 风险与规避
 
-- 风险：一次性替换 HTML 导致 `editor.js/main.js/marketplace.js` 绑定失效。
-  - 规避：保留旧 id，不改事件锚点；样式优先，结构渐进。
-- 风险：浅色主题在日志与代码文本可读性下降。
-  - 规避：日志和编辑区使用更高对比度文本与中性底色。
-- 风险：跨平台标题栏拖拽区域冲突。
-  - 规避：延续 `-webkit-app-region` 规则并单独验收 macOS。
+- 风险：Workspace 与 Project Studio 混在一个页面里，导致导航语义继续混乱。
+  - 规避：顶层 view state 明确区分，项目卡点击才进入项目工作台。
+- 风险：重写外层结构导致 `editor.js/main.js/marketplace.js` 绑定失效。
+  - 规避：保留关键 id，迁移前列出事件锚点，迁移后逐项验收。
+- 风险：参考图中的 RAG 表述与当前“无 RAG 版本”架构冲突。
+  - 规避：UI 可保留 RAG Nodes 视觉分区，但实现层先映射为知识/文档节点或禁用态，后续再调整术语。
+- 风险：浅色编辑器与日志可读性不足。
+  - 规避：代码/日志区域使用更高对比文本，状态色只做辅助，不承担主要可读信息。
+- 风险：Tauri 标题栏、拖拽区、窗口高度与自定义 Topbar 冲突。
+  - 规避：单独验收 macOS 窗口拖拽、按钮点击、全屏与最小宽度。
 
 ---
 
 ## 交付物清单
-- [ ] 新版 `ui/style.css`（或拆分为 `theme.css + components.css`）
-- [ ] 结构升级后的 `ui/index.html`
-- [ ] 关键页面截图（before/after）
-- [ ] UI 规范文档（token + 组件 + 状态）
-- [ ] 回归测试记录
+- [ ] 新版 UI token 与组件样式（`ui/style.css` 或拆分后的 CSS 文件）
+- [ ] 重写后的 `ui/index.html` 顶层结构：Workspace view + Project Studio view
+- [ ] Workspace Dashboard 页面实现
+- [ ] Project Studio Shell 页面实现
+- [ ] Node Library / Marketplace 页面实现
+- [ ] Editor + Run Log + Settings 视图回归
+- [ ] 关键页面截图：Workspace、Node Library、Editor、Run Log、Settings
+- [ ] UI 规范文档：token、组件、状态、响应式、交互规则
+- [ ] 回归测试记录：点击链路、键盘链路、Tauri dev/build
 
 ---
 
 ## 我建议的执行顺序（可直接开工）
-1. 先做 **Phase 1 + Phase 2**（低风险，高可见收益）。
-2. 再做 **Phase 3**（核心编辑体验）。
-3. 最后做 **Phase 4~6**（打磨与发布）。
+1. 先做 **Phase 0 + Phase 1**：把现有问题、参考图拆解和 token 定下来。
+2. 再做 **Phase 2**：先把 Workspace 首页做对，建立第一视觉印象。
+3. 接着做 **Phase 3 + Phase 4**：Project Studio 壳层和 Node Library 同步推进，保证第二张参考图落地。
+4. 然后做 **Phase 5**：把 Editor、Run Log、Settings 接回新壳层。
+5. 最后做 **Phase 6**：响应式、可访问性、截图回归和 Tauri build。
