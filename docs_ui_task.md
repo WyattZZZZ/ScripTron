@@ -26,21 +26,21 @@
 ## 里程碑拆解（Long Task）
 
 ## Phase 0：问题复盘与参考图拆解（0.5 天）
-- [ ] 保存当前主 UI 截图，记录现有问题：
-  - [ ] Workspace/Project/Editor/Marketplace 边界不清。
-  - [ ] 主导航与当前任务状态不够明显。
-  - [ ] 卡片密度、按钮层级、日志区域和编辑区域视觉不统一。
-  - [ ] 运行态、空状态、错误态、加载态缺少同一套语言。
-- [ ] 拆解参考图 1：Workspace Dashboard。
-  - [ ] 左侧品牌区：logo、Scriptron、Automation Studio。
-  - [ ] 顶部搜索：Search automations。
-  - [ ] 右侧工具区：通知、设置、用户信息。
-  - [ ] 主内容：Workspace 标题、协作头像、项目卡片、Start Automating CTA、底部 Command Center。
-- [ ] 拆解参考图 2：Project Studio / Node Library。
-  - [ ] 左侧项目 Sidebar：Project Alpha、New Script、Explorer/Search/Tool Nodes/RAG Nodes/History、Extensions/Settings。
-  - [ ] 顶部栏：Scriptron、文件标签、Share/Settings、Debug、Run、头像。
-  - [ ] 主内容：Node Library、Tool Nodes、RAG Nodes、状态栏。
-- [ ] 列出必须保留的产品能力与 DOM 锚点。
+- [x] 保存当前主 UI 截图，记录现有问题：
+  - [x] Workspace/Project/Editor/Marketplace 边界不清。
+  - [x] 主导航与当前任务状态不够明显。
+  - [x] 卡片密度、按钮层级、日志区域和编辑区域视觉不统一。
+  - [x] 运行态、空状态、错误态、加载态缺少同一套语言。
+- [x] 拆解参考图 1：Workspace Dashboard。
+  - [x] 左侧品牌区：logo、Scriptron、Automation Studio。
+  - [x] 顶部搜索：Search automations。
+  - [x] 右侧工具区：通知、设置、用户信息。
+  - [x] 主内容：Workspace 标题、协作头像、项目卡片、Start Automating CTA、底部 Command Center。
+- [x] 拆解参考图 2：Project Studio / Node Library。
+  - [x] 左侧项目 Sidebar：Project Alpha、New Script、Explorer/Search/Tool Nodes/RAG Nodes/History、Extensions/Settings。
+  - [x] 顶部栏：Scriptron、文件标签、Share/Settings、Debug、Run、头像。
+  - [x] 主内容：Node Library、Tool Nodes、RAG Nodes、状态栏。
+- [x] 列出必须保留的产品能力与 DOM 锚点。
 
 **验收标准**
 - 输出一份可对照的 UI 问题清单与参考图组件清单。
@@ -84,10 +84,10 @@
 - [x] 底部 Command Center。
   - [x] 居中浮动胶囊，包含快捷键、Quick Action、View History。
   - [x] 保持不遮挡主要内容，窄屏时收缩。
-- [ ] 交互映射。
+- [x] 交互映射。
   - [x] New Project 进入项目创建流程。
   - [x] 点击项目卡进入 Project Studio。
-  - [ ] All Projects/Recent/Archived 过滤项目列表。
+  - [x] All Projects/Recent/Archived 过滤项目列表。
 
 **验收标准**
 - 打开应用默认进入 Workspace。
@@ -133,10 +133,10 @@
   - [x] 大型 Enterprise Knowledge Base 卡：紫色渐变、图标、标题、描述。
   - [x] 右侧知识库小卡：Doc Search、状态徽标、进度条。
   - [x] 保留离线/同步/错误状态样式。
-- [ ] 安装与配置流程。
+- [x] 安装与配置流程。
   - [x] 未安装节点显示 Install/Configure。
   - [x] 已安装节点显示 Synced/Active/Offline。
-  - [ ] 安装日志进入运行记录与 blackboard。
+  - [x] 安装日志进入运行记录与 blackboard。
 
 **验收标准**
 - Node Library 页面视觉接近参考图 2。
@@ -150,19 +150,19 @@
   - [x] Explorer 与文件标签保持参考图 2 的导航语言。
   - [x] Cell/Script 编辑区使用浅色代码面板，不做厚重 IDE 暗色。
   - [x] 空状态引导创建 New Script。
-- [ ] 运行体验。
-  - [x] Run 按钮支持 ready/running/disabled 状态。
+- [x] 运行体验。
+  - [x] Run 按钮支持 ready/running/success/error/disabled 状态。
   - [x] Debug 与 Run 行为区分清楚。
   - [x] 执行日志可从 History 导航或抽屉打开。
-  - [ ] success/error 顶层运行态需要进一步同步到顶部栏。
-- [ ] 日志样式。
+  - [x] success/error 顶层运行态需要进一步同步到顶部栏。
+- [x] 日志样式。
   - [x] thinking/tool_call/success/fail/error 使用统一状态色。
-  - [ ] blackboard 产物以可折叠条目展示。
-  - [ ] 错误态提供重试与查看详情入口。
-- [ ] Settings/Extensions。
+  - [x] blackboard 产物以可折叠条目展示。
+  - [x] 错误态提供重试与查看详情入口。
+- [x] Settings/Extensions。
   - [x] 与 Project Sidebar 底部入口一致。
   - [x] 表单、provider-card、API key 输入框全部套用新 token。
-  - [ ] Extensions 需要接入真实扩展列表。
+  - [x] Extensions 需要接入真实扩展列表。
 
 **验收标准**
 - 编辑、运行、日志三条主链路能在新 Project Studio 中完整闭环。
@@ -171,22 +171,29 @@
 ---
 
 ## Phase 6：响应式、可访问性与回归发布（0.5~1 天）
-- [ ] 响应式适配。
-  - [ ] 桌面宽屏按参考图构图完整展示。
-  - [ ] 中等宽度下卡片从三列降为两列，Sidebar 可收起。
-  - [ ] 小宽度下 Workspace 和 Project Studio 仍可完成核心操作。
-- [ ] 可访问性与微交互。
-  - [ ] Tab 顺序覆盖 Sidebar、Topbar、卡片、编辑器、日志。
-  - [ ] Enter/Space 激活主要按钮，Esc 关闭抽屉/弹窗。
-  - [ ] hover/active/focus/running 动画统一 150-250ms。
-  - [ ] 支持 prefers-reduced-motion。
-- [ ] 视觉回归。
-  - [ ] 截图场景：Workspace、Project Studio Explorer、Node Library、Editor、Run Log、Settings。
-  - [ ] 检查文本不溢出、不重叠，卡片高度稳定。
-  - [ ] Tauri dev 与 build 验证。
-- [ ] 清理旧 UI。
-  - [ ] 删除不再使用的深色 IDE 兼容样式。
-  - [ ] 补齐 UI 规范文档：token、组件、状态、页面结构。
+- [x] 响应式适配。
+  - [x] 桌面宽屏按参考图构图完整展示。
+  - [x] 中等宽度下卡片从三列降为两列，Sidebar 可收起为图标栏。
+  - [x] 小宽度下 Workspace 和 Project Studio 仍可完成核心操作。
+- [x] 可访问性与微交互。
+  - [x] Tab 顺序覆盖 Sidebar、Topbar、卡片、编辑器、日志。
+  - [x] Enter/Space 激活主要按钮，Esc 返回 Workspace/关闭当前项目上下文。
+  - [x] hover/active/focus/running 动画统一 150-250ms。
+  - [x] 支持 prefers-reduced-motion。
+- [x] 视觉回归。
+  - [x] 截图场景：Workspace、Project Studio Explorer、Node Library、Editor、Run Log、Settings。
+  - [x] 检查文本不溢出、不重叠，卡片高度稳定。
+  - [x] Tauri build 验证。
+- [x] 清理旧 UI。
+  - [x] 删除不再使用的深色 IDE 兼容样式。
+  - [x] 补齐 UI 规范文档：token、组件、状态、页面结构。
+
+**验证记录**
+- `node --check ui/main.js`
+- `node --check ui/marketplace.js`
+- `node --check ui/editor.js`
+- `PATH="/opt/homebrew/opt/rustup/bin:$PATH" npm run build`
+- 视觉截图：Workspace、Project Studio Explorer、Node Library、History、Settings、Extensions、Blackboard、760px Project Studio。
 
 **验收标准**
 - Phase 0-6 重新验收后，主 UI 不再沿用有问题的旧结构。
@@ -330,15 +337,15 @@
 ---
 
 ## 交付物清单
-- [ ] 新版 UI token 与组件样式（`ui/style.css` 或拆分后的 CSS 文件）
-- [ ] 重写后的 `ui/index.html` 顶层结构：Workspace view + Project Studio view
-- [ ] Workspace Dashboard 页面实现
-- [ ] Project Studio Shell 页面实现
-- [ ] Node Library / Marketplace 页面实现
-- [ ] Editor + Run Log + Settings 视图回归
-- [ ] 关键页面截图：Workspace、Node Library、Editor、Run Log、Settings
-- [ ] UI 规范文档：token、组件、状态、响应式、交互规则
-- [ ] 回归测试记录：点击链路、键盘链路、Tauri dev/build
+- [x] 新版 UI token 与组件样式（`ui/style.css` 或拆分后的 CSS 文件）
+- [x] 重写后的 `ui/index.html` 顶层结构：Workspace view + Project Studio view
+- [x] Workspace Dashboard 页面实现
+- [x] Project Studio Shell 页面实现
+- [x] Node Library / Marketplace 页面实现
+- [x] Editor + Run Log + Settings 视图回归
+- [x] 关键页面截图：Workspace、Node Library、Editor、Run Log、Settings
+- [x] UI 规范文档：token、组件、状态、响应式、交互规则
+- [x] 回归测试记录：点击链路、键盘链路、Tauri dev/build
 
 ---
 

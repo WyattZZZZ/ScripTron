@@ -6,6 +6,8 @@ members = [
     "crates/process-runner",
     "crates/agent-loop",
     "crates/auth",
+    "crates/scriptron-core",
+    "crates/scriptron-ffi",
 ]
 resolver = "2"
 

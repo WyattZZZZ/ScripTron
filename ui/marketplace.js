@@ -91,15 +91,17 @@ window.Marketplace = (() => {
 
   async function refresh() {
     try {
-      tools = await invoke('list_tools');
+      tools = await invoke('list_tools') || [];
       renderInstalled();
     } catch (e) {
       console.error('Failed to load tools:', e);
+      tools = [];
     }
   }
 
   function renderInstalled() {
     const list = document.getElementById('marketplace-list');
+    if (!list) return;
     list.innerHTML = '';
 
     // Community registry section
@@ -194,7 +196,9 @@ window.Marketplace = (() => {
       await invoke('install_tool_from_json', { manifest_json: JSON.stringify(manifest) });
       await refresh();
       if (onChanged) onChanged();
+      emitAudit('install', name, 'success', `${name} installed from Node Library.`);
     } catch (e) {
+      emitAudit('install', name, 'error', `Failed to install ${name}: ${e}`);
       alert(`Failed to install ${name}: ${e}`);
     }
   }
@@ -204,7 +208,9 @@ window.Marketplace = (() => {
       await invoke('remove_tool', { name });
       await refresh();
       if (onChanged) onChanged();
+      emitAudit('uninstall', name, 'success', `${name} removed from Node Library.`);
     } catch (e) {
+      emitAudit('uninstall', name, 'error', `Failed to remove ${name}: ${e}`);
       alert(`Failed to uninstall ${name}: ${e}`);
     }
   }
@@ -219,16 +225,25 @@ window.Marketplace = (() => {
       const json = document.getElementById('custom-manifest-input').value.trim();
       if (!json) return;
       try {
+        const manifest = JSON.parse(json);
         await invoke('install_tool_from_json', { manifest_json: json });
         await refresh();
         if (onChanged) onChanged();
+        emitAudit('install', manifest.name || 'custom tool', 'success', `${manifest.name || 'Custom tool'} installed from local manifest.`);
       } catch (e) {
+        emitAudit('install', 'custom tool', 'error', `Install failed: ${e}`);
         alert(`Install failed: ${e}`);
       }
     });
   }
 
   function getTools() { return tools; }
+
+  function emitAudit(action, name, status, message) {
+    document.dispatchEvent(new CustomEvent('scriptron:marketplace-audit', {
+      detail: { action, name, status, message },
+    }));
+  }
 
   function escHtml(s) {
     return String(s)

@@ -28,30 +28,30 @@
         </button>
 
         <nav class="workspace-nav" aria-label="Workspace navigation">
-          <button class="workspace-nav-item active" type="button">
+          <button class="workspace-nav-item active" type="button" data-workspace-filter="all">
             <span class="material-symbols-outlined">folder_open</span>
             <span>All Projects</span>
           </button>
-          <button class="workspace-nav-item" type="button">
+          <button class="workspace-nav-item" type="button" data-workspace-filter="shared">
             <span class="material-symbols-outlined">share</span>
             <span>Shared</span>
           </button>
-          <button class="workspace-nav-item" type="button">
+          <button class="workspace-nav-item" type="button" data-workspace-filter="recent">
             <span class="material-symbols-outlined">history</span>
             <span>Recent</span>
           </button>
-          <button class="workspace-nav-item" type="button">
+          <button class="workspace-nav-item" type="button" data-workspace-filter="archived">
             <span class="material-symbols-outlined">archive</span>
             <span>Archived</span>
           </button>
         </nav>
 
         <div class="workspace-sidebar-footer">
-          <button class="workspace-nav-item subtle" type="button">
+          <button class="workspace-nav-item subtle" type="button" data-utility-action="help">
             <span class="material-symbols-outlined">help</span>
             <span>Help Center</span>
           </button>
-          <button class="workspace-nav-item subtle" type="button">
+          <button class="workspace-nav-item subtle" type="button" data-utility-action="logout">
             <span class="material-symbols-outlined">logout</span>
             <span>Log Out</span>
           </button>
@@ -65,10 +65,10 @@
             <input type="search" placeholder="Search automations..." aria-label="Search automations" />
           </div>
           <div class="topbar-actions">
-            <button class="icon-btn notification-btn" title="Notifications" type="button">
+            <button class="icon-btn notification-btn" title="Notifications" type="button" data-utility-action="notifications">
               <span class="material-symbols-outlined">notifications</span>
             </button>
-            <button class="icon-btn" title="Settings" type="button">
+            <button class="icon-btn" title="Settings" type="button" data-utility-action="workspace-settings">
               <span class="material-symbols-outlined">settings</span>
             </button>
             <div class="topbar-divider"></div>
@@ -94,7 +94,7 @@
                 <span>NS</span>
                 <span>+4</span>
               </div>
-              <button class="ghost-action" type="button">
+              <button class="ghost-action" type="button" data-utility-action="share-workspace">
                 <span class="material-symbols-outlined">person_add</span>
                 <span>Share Workspace</span>
               </button>
@@ -102,7 +102,7 @@
           </div>
 
           <div class="project-grid">
-            <button class="project-card active-card" type="button" data-open-project>
+            <button class="project-card active-card" type="button" data-open-project data-project-groups="all shared recent">
               <div class="card-topline">
                 <span class="project-icon mint"><span class="material-symbols-outlined">contact_mail</span></span>
                 <span class="status-pill active">Active</span>
@@ -120,7 +120,7 @@
               </div>
             </button>
 
-            <button class="project-card" type="button" data-open-project>
+            <button class="project-card" type="button" data-open-project data-project-groups="all recent">
               <div class="card-topline">
                 <span class="project-icon lavender"><span class="material-symbols-outlined">database</span></span>
                 <span class="status-pill idle">Idle</span>
@@ -138,7 +138,7 @@
               </div>
             </button>
 
-            <button class="project-card draft-card" type="button" data-open-project>
+            <button class="project-card draft-card" type="button" data-open-project data-project-groups="all">
               <div class="card-topline">
                 <span class="project-icon sky"><span class="material-symbols-outlined">trending_up</span></span>
                 <span class="status-pill draft">Draft</span>
@@ -156,7 +156,7 @@
               </div>
             </button>
 
-            <button class="project-card wide-card" type="button" data-open-project>
+            <button class="project-card wide-card" type="button" data-open-project data-project-groups="all archived">
               <div class="wide-copy">
                 <div class="wide-title-row">
                   <span class="project-icon mint small"><span class="material-symbols-outlined">hub</span></span>
@@ -178,6 +178,12 @@
               <strong>Start Automating</strong>
               <span>Scale your productivity with a new custom node workflow.</span>
             </button>
+
+            <div id="workspace-empty" class="workspace-empty hidden">
+              <span class="material-symbols-outlined">filter_alt</span>
+              <h2>No projects in this view</h2>
+              <p>Try another workspace filter or start a new automation.</p>
+            </div>
           </div>
         </div>
 
@@ -205,6 +211,7 @@
         </div>
 
         <button id="btn-new-file" class="primary-wide script-button">
+          <span class="material-symbols-outlined">add</span>
           <span>New Script</span>
         </button>
 
@@ -248,13 +255,17 @@
           <button id="project-logo-link" class="project-title-button" type="button">Scriptron</button>
           <div id="tabs" class="file-tabs" aria-label="Open files"></div>
           <div class="project-actions">
-            <button class="icon-btn" title="Share" type="button">
+            <button class="icon-btn" title="Share" type="button" data-utility-action="share-project">
               <span class="material-symbols-outlined">share</span>
             </button>
             <button class="icon-btn" title="Settings" type="button" data-panel-jump="settings">
               <span class="material-symbols-outlined">settings</span>
             </button>
             <div class="topbar-divider"></div>
+            <div id="run-status-pill" class="run-status-pill idle">
+              <span class="status-dot idle"></span>
+              <span>Idle</span>
+            </div>
             <button id="btn-debug" class="debug-btn" type="button">Debug</button>
             <button id="btn-run" class="run-btn" title="Run all cells (⌘R)" type="button" disabled>
               <span class="material-symbols-outlined">play_arrow</span>
@@ -482,13 +493,10 @@
               <div>
                 <div class="eyebrow">Configuration</div>
                 <h1>Extensions</h1>
+                <p>Review installed CLI capabilities and jump back to the Node Library when you need more tools.</p>
               </div>
             </div>
-            <div class="placeholder-panel">
-              <span class="material-symbols-outlined">extension</span>
-              <h2>Extensions share the Node Library system</h2>
-              <p>Install and configure automation capabilities from Tool Nodes.</p>
-            </div>
+            <div id="extensions-content" class="extensions-grid"></div>
           </section>
 
           <section id="panel-settings" class="sidebar-panel studio-panel settings-panel" aria-label="Settings">

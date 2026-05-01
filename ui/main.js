@@ -33,18 +33,46 @@ let workspacePath = '';
 let isRunning = false;
 let execUnlisten = null;
 let currentRunEvents = [];
+let currentRunState = 'idle';
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', async () => {
-  await Marketplace.init(() => {
-    renderSettings(); // refresh settings after tool install
+document.addEventListener('DOMContentLoaded', () => {
+  boot().catch(error => {
+    console.error('ScripTron boot failed:', error);
+    appendLog({ type: 'error', message: `UI boot failed: ${error?.message || error}` });
   });
+});
 
-  renderSettings();
+async function boot() {
+  document.body.dataset.scriptronBoot = 'binding';
+  bindCoreInteractions();
+  setupInitialViewFromHash();
+  document.body.dataset.scriptronBoot = 'bound';
 
-  workspacePath = await invoke('get_workspace_path') || '~/ScripTron';
-  await refreshFileTree();
+  await safeInit('workspace path', async () => {
+    workspacePath = await invoke('get_workspace_path') || '~/ScripTron';
+  });
+  await safeInit('file tree', refreshFileTree);
 
+  await safeInit('marketplace', async () => {
+    if (!window.Marketplace) return;
+    await Marketplace.init(() => {
+      safeInit('settings refresh', renderSettings);
+      safeInit('extensions refresh', renderExtensions);
+    });
+  });
+  await safeInit('settings', renderSettings);
+  await safeInit('extensions', renderExtensions);
+
+  if (window.Editor?.setOnDirty) {
+    Editor.setOnDirty(() => markCurrentTabDirty());
+  }
+
+  execUnlisten = listen('execution-event', handleExecEvent);
+  document.body.dataset.scriptronBoot = 'ready';
+}
+
+function bindCoreInteractions() {
   setupSidebarTabs();
   setupRunButton();
   setupExecPanel();
@@ -55,13 +83,19 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupWorkspaceFilters();
   setupCommandCenter();
   setupHistoryActions();
-  setupInitialViewFromHash();
+  setupMarketplaceAudit();
+  setupUtilityActions();
+  setupKeyboardNavigation();
+}
 
-  Editor.setOnDirty(() => markCurrentTabDirty());
-
-  // Listen for execution events from Rust
-  execUnlisten = listen('execution-event', handleExecEvent);
-});
+async function safeInit(label, fn) {
+  try {
+    return await fn();
+  } catch (error) {
+    console.error(`Failed to initialize ${label}:`, error);
+    return null;
+  }
+}
 
 // ── Sidebar tab switching ─────────────────────────────────────────────────────
 function setupSidebarTabs() {
@@ -74,6 +108,8 @@ function setupSidebarTabs() {
       document.querySelectorAll('.sidebar-panel').forEach(p => p.classList.remove('active'));
       btn.classList.add('active');
       panel.classList.add('active');
+      if (target === 'extensions') renderExtensions();
+      if (target === 'settings') renderSettings();
     });
   });
 }
@@ -111,6 +147,13 @@ function setupInitialViewFromHash() {
     showProjectView('settings');
   } else if (hash === '#history') {
     showProjectView('history');
+  } else if (hash === '#extensions') {
+    showProjectView('extensions');
+  } else if (hash === '#blackboard') {
+    showProjectView('files');
+    loadPreviewScript();
+    showProjectView('settings');
+    renderSettings();
   }
 }
 
@@ -142,8 +185,26 @@ function setupWorkspaceFilters() {
       if (!group) return;
       group.querySelectorAll('.workspace-nav-item').forEach(item => item.classList.remove('active'));
       btn.classList.add('active');
+      applyWorkspaceFilter(btn.dataset.workspaceFilter || 'all');
     });
   });
+}
+
+function applyWorkspaceFilter(filter) {
+  const cards = [...document.querySelectorAll('[data-project-groups]')];
+  let visibleCount = 0;
+  cards.forEach(card => {
+    const groups = (card.dataset.projectGroups || 'all').split(/\s+/);
+    const visible = filter === 'all' || groups.includes(filter);
+    card.classList.toggle('is-filtered-out', !visible);
+    if (visible) visibleCount += 1;
+  });
+
+  const startCard = document.getElementById('btn-welcome-new');
+  if (startCard) startCard.classList.toggle('is-filtered-out', filter !== 'all');
+
+  const empty = document.getElementById('workspace-empty');
+  if (empty) empty.classList.toggle('hidden', visibleCount > 0);
 }
 
 function setupCommandCenter() {
@@ -160,6 +221,26 @@ function setupCommandCenter() {
   });
 }
 
+function setupKeyboardNavigation() {
+  document.addEventListener('keydown', e => {
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+      e.preventDefault();
+      const visibleWorkspace = document.getElementById('workspace-view')?.classList.contains('active');
+      if (visibleWorkspace) {
+        showProjectView('files');
+        showNewFileModal();
+      } else {
+        showProjectView('marketplace');
+      }
+    }
+    if (e.key === 'Escape') {
+      const projectActive = document.getElementById('project-view')?.classList.contains('active');
+      const modalOpen = !document.getElementById('modal-overlay')?.classList.contains('hidden');
+      if (projectActive && !modalOpen) showWorkspaceView();
+    }
+  });
+}
+
 function setupHistoryActions() {
   document.getElementById('btn-open-live-log')?.addEventListener('click', () => {
     showProjectView('files');
@@ -168,6 +249,42 @@ function setupHistoryActions() {
   document.getElementById('btn-history-new-run')?.addEventListener('click', () => {
     showProjectView('files');
     showNewFileModal();
+  });
+}
+
+function setupMarketplaceAudit() {
+  document.addEventListener('scriptron:marketplace-audit', e => {
+    const detail = e.detail || {};
+    const ok = detail.status !== 'error';
+    const event = {
+      type: ok ? 'tool_result' : 'error',
+      content: detail.message || `${detail.action || 'Tool update'}: ${detail.name || 'unknown tool'}`,
+      tool: detail.name || 'marketplace',
+      status: detail.status || 'success',
+    };
+    appendLog(event);
+    appendEventToBlackboard(event);
+  });
+}
+
+function setupUtilityActions() {
+  document.querySelectorAll('[data-utility-action]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const action = btn.dataset.utilityAction;
+      if (action === 'workspace-settings') {
+        showProjectView('settings');
+      } else if (action === 'notifications') {
+        showModal('Notifications', '<p>No new automation alerts. Failed runs and install events will appear here.</p>', 'Done');
+      } else if (action === 'share-workspace') {
+        showModal('Share Workspace', '<p>Workspace sharing is ready for collaborators once account sync is connected.</p>', 'Done');
+      } else if (action === 'share-project') {
+        showModal('Share Project', '<p>Project sharing will use the active workspace collaborators.</p>', 'Done');
+      } else if (action === 'help') {
+        showModal('Help Center', '<p>Create a script, add run cells, then use Run or Debug to inspect the live log.</p>', 'Done');
+      } else if (action === 'logout') {
+        showModal('Log Out', '<p>Local sessions stay on this device. Account sign-out will be enabled with cloud sync.</p>', 'Done');
+      }
+    });
   });
 }
 
@@ -198,7 +315,8 @@ function loadPreviewScript() {
   Editor.load(tab.path, tab.cells);
   renderTabs();
   appendLog({ type: 'thinking', content: 'Preview log ready. Run a script to stream live events here.' });
-  setStatusDot('idle');
+  appendEventToBlackboard({ type: 'thinking', content: 'Preview log ready. Run a script to stream live events here.' });
+  setRunStatus('idle');
 }
 
 // ── File tree ─────────────────────────────────────────────────────────────────
@@ -348,11 +466,11 @@ function markCurrentTabDirty() {
 
 // ── New file ──────────────────────────────────────────────────────────────────
 function setupNewFileButton() {
-  document.getElementById('btn-new-file').addEventListener('click', () => {
+  document.getElementById('btn-new-file')?.addEventListener('click', () => {
     showProjectView('files');
     showNewFileModal();
   });
-  document.getElementById('btn-welcome-new').addEventListener('click', () => {
+  document.getElementById('btn-welcome-new')?.addEventListener('click', () => {
     showProjectView('files');
     showNewFileModal();
   });
@@ -392,20 +510,20 @@ function showNewFileModal() {
 }
 
 function setupWelcomeButtons() {
-  document.getElementById('btn-welcome-open').addEventListener('click', async () => {
+  document.getElementById('btn-welcome-open')?.addEventListener('click', async () => {
     showProjectView('files');
   });
 }
 
 function setupInstallLocalButton() {
-  document.getElementById('btn-install-local').addEventListener('click', () => {
-    Marketplace.installFromLocalFile();
+  document.getElementById('btn-install-local')?.addEventListener('click', () => {
+    window.Marketplace?.installFromLocalFile?.();
   });
 }
 
 // ── Run ───────────────────────────────────────────────────────────────────────
 function setupRunButton() {
-  document.getElementById('btn-run').addEventListener('click', () => {
+  document.getElementById('btn-run')?.addEventListener('click', () => {
     if (isRunning) return;
     runTask();
   });
@@ -430,6 +548,7 @@ async function runTask() {
   const hasRunCells = cells.some(c => c.run && c.content.trim());
   if (!hasRunCells) {
     appendLog({ type: 'error', message: 'No run cells with content found.' });
+    setRunStatus('error', 'Needs content');
     expandExecPanel();
     return;
   }
@@ -441,7 +560,7 @@ async function runTask() {
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <rect x="6" y="6" width="12" height="12" rx="2"/>
     </svg> Running…`;
-  setStatusDot('running');
+  setRunStatus('running');
   clearLog();
   currentRunEvents = [];
   expandExecPanel();
@@ -451,8 +570,13 @@ async function runTask() {
       cells,
       project_path: workspacePath,
     });
+    if (currentRunState === 'running') {
+      setRunStatus('done');
+      appendLog({ type: 'complete' });
+    }
   } catch (e) {
     appendLog({ type: 'error', message: String(e) });
+    setRunStatus('error');
   } finally {
     isRunning = false;
     document.getElementById('btn-run').classList.remove('running');
@@ -467,8 +591,8 @@ function handleExecEvent(event) {
   currentRunEvents.push(event);
   appendEventToBlackboard(event);
   appendLog(event);
-  if (event.type === 'complete') setStatusDot('done');
-  if (event.type === 'error') setStatusDot('error');
+  if (event.type === 'complete') setRunStatus('done');
+  if (event.type === 'error') setRunStatus('error');
 }
 
 function appendEventToBlackboard(event) {
@@ -534,6 +658,15 @@ function appendLog(event) {
 
   entry.innerHTML = `<span class="log-icon">${icon}</span><span class="log-text">${escHtml(text)}</span>`;
   log.appendChild(entry);
+  if (event.type === 'error') {
+    const retry = document.createElement('div');
+    retry.className = 'log-retry-row';
+    retry.innerHTML = '<button class="btn-secondary" type="button">Retry last run</button>';
+    retry.querySelector('button').addEventListener('click', () => {
+      if (!isRunning && activeTab >= 0) runTask();
+    });
+    log.appendChild(retry);
+  }
   log.scrollTop = log.scrollHeight;
 }
 
@@ -541,13 +674,28 @@ function clearLog() {
   const log = document.getElementById('exec-log');
   if (!log) return;
   log.innerHTML = '';
-  setStatusDot('running');
+  setRunStatus('running');
+}
+
+function setRunStatus(state, label) {
+  currentRunState = state;
+  const dot = document.getElementById('exec-status-dot');
+  if (dot) dot.className = `status-dot ${state}`;
+
+  const pill = document.getElementById('run-status-pill');
+  if (!pill) return;
+  const labels = {
+    idle: 'Idle',
+    running: 'Running',
+    done: 'Success',
+    error: 'Error',
+  };
+  pill.className = `run-status-pill ${state}`;
+  pill.innerHTML = `<span class="status-dot ${state}"></span><span>${escHtml(label || labels[state] || state)}</span>`;
 }
 
 function setStatusDot(state) {
-  const dot = document.getElementById('exec-status-dot');
-  if (!dot) return;
-  dot.className = `status-dot ${state}`;
+  setRunStatus(state);
 }
 
 // ── Execution panel toggle ────────────────────────────────────────────────────
@@ -559,7 +707,7 @@ function setupExecPanel() {
   clearBtn.addEventListener('click', e => {
     e.stopPropagation();
     clearLog();
-    setStatusDot('idle');
+    setRunStatus('idle');
   });
 }
 
@@ -590,6 +738,7 @@ let _activeConfig = { provider: 'anthropic', model: 'claude-opus-4-7' };
 
 async function renderSettings() {
   const container = document.getElementById('settings-content');
+  if (!container) return;
   container.innerHTML = '';
 
   try {
@@ -677,7 +826,7 @@ async function renderSettings() {
 
   bb.innerHTML = `
     <div class="settings-section-title">Project Blackboard</div>
-    <div style="padding:10px;border:1px solid var(--border);border-radius:8px;background:var(--bg-cell)">
+    <div style="padding:14px;border:1px solid var(--border);border-radius:14px;background:var(--bg-cell)">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
         <span style="font-size:12px;color:var(--text-dim)">Entries: <strong style="color:var(--text)">${entries.length}</strong></span>
         <button class="btn-secondary" style="font-size:11px;padding:4px 10px" onclick="clearActiveBlackboard()">Clear</button>
@@ -685,9 +834,63 @@ async function renderSettings() {
       <div style="margin-top:8px;font-size:11px;color:var(--text-dim)">
         ${last ? `Last event: <code class="mono">${escHtml(last.type || 'unknown')}</code> @ ${escHtml(last.ts || '')}` : 'No events yet.'}
       </div>
+      ${renderBlackboardEntries(entries)}
     </div>
   `;
   container.appendChild(bb);
+}
+
+function renderBlackboardEntries(entries) {
+  if (!entries.length) return '';
+  const recent = entries.slice(-5).reverse();
+  return `
+    <div class="blackboard-list">
+      ${recent.map((entry, idx) => {
+        const type = entry.type || entry.payload?.type || 'event';
+        const ts = entry.ts || '';
+        const payload = JSON.stringify(entry.payload || entry, null, 2);
+        return `
+          <details class="blackboard-entry" ${idx === 0 ? 'open' : ''}>
+            <summary><span>${escHtml(type)}</span><span style="margin-left:auto;color:var(--text-subtle);font-size:10px">${escHtml(ts)}</span></summary>
+            <pre>${escHtml(payload)}</pre>
+          </details>
+        `;
+      }).join('')}
+    </div>
+  `;
+}
+
+function renderExtensions() {
+  const container = document.getElementById('extensions-content');
+  if (!container || !window.Marketplace) return;
+  const tools = Marketplace.getTools() || [];
+  const cards = tools.length ? tools : [
+    {
+      name: 'No installed tools',
+      version: 'Ready',
+      description: 'Install a Tool Node from the Node Library to make it available to scripts.',
+      command: 'node-library',
+    },
+  ];
+
+  container.innerHTML = cards.map(tool => `
+    <article class="extension-card">
+      <div class="extension-card-header">
+        <span class="node-icon mint"><span class="material-symbols-outlined">${tools.length ? 'extension' : 'add_circle'}</span></span>
+        <span class="status-pill ${tools.length ? 'active' : 'idle'}">${tools.length ? 'Installed' : 'Empty'}</span>
+      </div>
+      <h2>${escHtml(tool.name)}</h2>
+      <p>${escHtml(tool.description || 'Automation capability installed from the local registry.')}</p>
+      <div class="extension-card-footer">
+        <span class="tool-version">${escHtml(tool.command || tool.version || 'available')}</span>
+        <button class="btn-secondary" type="button" data-panel-jump-inline="marketplace">${tools.length ? 'Configure' : 'Open Library'}</button>
+      </div>
+    </article>
+  `).join('');
+
+  container.querySelectorAll('[data-panel-jump-inline]').forEach(btn => {
+    btn.addEventListener('click', () => showProjectView(btn.dataset.panelJumpInline));
+  });
 }
 
 window.clearActiveBlackboard = async () => {
