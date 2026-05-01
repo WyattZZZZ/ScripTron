@@ -212,6 +212,7 @@
   - [ ] 项目内代码/文档格式要求（命名、目录结构、注释规范）
   - [ ] 项目内任务约束（禁止目录、必须测试、输出模板）
   - [ ] 项目内长期上下文（业务术语、缩写解释）
+  - [ ] 项目配置文件，是否achieve，项目基本信息
 - [ ] 记忆读写策略：
   - [ ] 打开项目时：加载全局记忆 + 项目记忆到内存
   - [ ] 执行中：Agent 可追加记忆草稿（需可审计）
@@ -346,12 +347,3 @@
 - [x] 关键页面截图：Workspace、Node Library、Editor、Run Log、Settings
 - [x] UI 规范文档：token、组件、状态、响应式、交互规则
 - [x] 回归测试记录：点击链路、键盘链路、Tauri dev/build
-
----
-
-## 我建议的执行顺序（可直接开工）
-1. 先做 **Phase 0 + Phase 1**：把现有问题、参考图拆解和 token 定下来。
-2. 再做 **Phase 2**：先把 Workspace 首页做对，建立第一视觉印象。
-3. 接着做 **Phase 3 + Phase 4**：Project Studio 壳层和 Node Library 同步推进，保证第二张参考图落地。
-4. 然后做 **Phase 5**：把 Editor、Run Log、Settings 接回新壳层。
-5. 最后做 **Phase 6**：响应式、可访问性、截图回归和 Tauri build。

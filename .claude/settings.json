@@ -1,8 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(dpkg -l libwebkit2gtk* libgtk*)",
-      "Bash(awk '{print $2, $3}')"
-    ]
-  }
-}

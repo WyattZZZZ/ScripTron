@@ -6,3 +6,6 @@ src-tauri/target
 ui/dist
 .DS_Store
 *.tsbuildinfo
+.claude/worktrees/
+macos/ScripTronNative/.swiftpm/
+macos/ScripTronNative/.build/

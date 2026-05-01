@@ -1,7 +1,9 @@
 use once_cell::sync::OnceCell;
+use parking_lot::Mutex;
 use scriptron_core::ScriptronCore;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::collections::VecDeque;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 use tokio::runtime::Runtime;
@@ -9,6 +11,7 @@ use tron_parser::TronCell;
 
 static RUNTIME: OnceCell<Runtime> = OnceCell::new();
 static CORE: OnceCell<ScriptronCore> = OnceCell::new();
+static EVENTS: OnceCell<Mutex<VecDeque<Value>>> = OnceCell::new();
 
 #[derive(Debug, Deserialize)]
 struct RpcRequest {
@@ -117,6 +120,31 @@ async fn dispatch(request: RpcRequest) -> Result<Value, String> {
             let project_path = required_string(&request.params, "project_path")?;
             Ok(core.build_task(cells, project_path).await)
         }
+        "run_task_preview" => {
+            let cells: Vec<TronCell> = serde_json::from_value(required_value(&request.params, "cells")?)
+                .map_err(|e| e.to_string())?;
+            let project_path = required_string(&request.params, "project_path")?;
+            let task = core.build_task(cells, project_path).await;
+            enqueue_event(json!({
+                "type": "thinking",
+                "content": "SwiftUI requested a Rust-backed run preview.",
+            }));
+            enqueue_event(json!({
+                "type": "tool_result",
+                "tool": "build_task",
+                "content": task,
+            }));
+            enqueue_event(json!({
+                "type": "complete",
+                "content": "Run preview completed. Real agent streaming will replace this queue next.",
+            }));
+            Ok(json!({ "queued": 3 }))
+        }
+        "poll_events" => {
+            let mut queue = event_queue().lock();
+            let events: Vec<Value> = queue.drain(..).collect();
+            Ok(json!(events))
+        }
         other => Err(format!("Unknown ScripTron method: {other}")),
     }
 }
@@ -132,6 +160,14 @@ async fn ensure_core() -> Result<(), String> {
 
 fn runtime() -> &'static Runtime {
     RUNTIME.get_or_init(|| Runtime::new().expect("failed to create ScripTron runtime"))
+}
+
+fn event_queue() -> &'static Mutex<VecDeque<Value>> {
+    EVENTS.get_or_init(|| Mutex::new(VecDeque::new()))
+}
+
+fn enqueue_event(event: Value) {
+    event_queue().lock().push_back(event);
 }
 
 fn read_request(ptr: *const c_char) -> Option<String> {

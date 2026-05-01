@@ -25,7 +25,7 @@ struct FileEntry: Identifiable, Decodable {
     let is_tron: Bool
 }
 
-struct TronCell: Codable, Identifiable {
+struct TronCell: Codable, Identifiable, Equatable {
     var id = UUID()
     var run: Bool
     var content: String
@@ -34,12 +34,37 @@ struct TronCell: Codable, Identifiable {
         case run
         case content
     }
+
+    init(run: Bool, content: String) {
+        self.run = run
+        self.content = content
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        run = try container.decode(Bool.self, forKey: .run)
+        content = try container.decode(String.self, forKey: .content)
+        id = UUID()
+    }
 }
 
 struct TronFile: Decodable {
     let path: String
     let cells: [TronCell]
     let blackboard: AnyCodable
+}
+
+struct RunEvent: Identifiable, Decodable {
+    var id = UUID()
+    let type: String
+    let content: AnyCodable?
+    let tool: String?
+
+    enum CodingKeys: String, CodingKey {
+        case type
+        case content
+        case tool
+    }
 }
 
 struct ActiveConfig: Decodable {
@@ -98,11 +123,11 @@ struct AnyCodable: Codable {
     }
 }
 
+@MainActor
 final class RustBridge {
     static let shared = RustBridge()
 
     private let decoder = JSONDecoder()
-    private let encoder = JSONEncoder()
 
     func initialize() throws {
         let response = readCString(scriptron_init())
@@ -129,6 +154,10 @@ final class RustBridge {
         throw BridgeError.runtime(envelope.error ?? "Unknown Rust error")
     }
 
+    func callVoid(_ method: String, params: [String: Any] = [:]) throws {
+        let _: AnyCodable = try call(method, params: params, as: AnyCodable.self)
+    }
+
     private func readCString(_ pointer: UnsafeMutablePointer<CChar>?) -> String {
         guard let pointer else { return #"{"ok":false,"error":"Rust returned null"}"# }
         defer { scriptron_free_string(pointer) }
@@ -145,4 +174,3 @@ final class RustBridge {
         }
     }
 }
-

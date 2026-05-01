@@ -94,7 +94,7 @@ impl ScriptronCore {
     }
 
     pub async fn create_tron_file(&self, path: String) -> Result<TronFileDto, String> {
-        let cells = vec![TronCell { run: true, content: String::new() }];
+        let cells = Vec::<TronCell>::new();
         let blackboard = serde_json::json!({ "entries": [], "notes": [] });
         let content = tron_parser::serialize_with_blackboard(&cells, &blackboard);
         tokio::fs::write(&path, &content).await.map_err(|e| e.to_string())?;
@@ -182,4 +182,3 @@ async fn list_dir(dir: PathBuf) -> Result<Vec<FileEntry>, String> {
 fn parse_provider(s: &str) -> Result<Provider, String> {
     Provider::from_id(s).ok_or_else(|| format!("Unknown provider: {}", s))
 }
-

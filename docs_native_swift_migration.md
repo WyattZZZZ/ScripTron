@@ -52,6 +52,10 @@ It currently includes:
 - Workspace dashboard
 - Project Studio shell
 - Explorer panel backed by Rust `list_workspace_files` and `open_tron_file`
+- Editable native cell editor
+- New script creation through `create_tron_file`
+- Save flow through `save_tron_file`
+- Run preview flow through `run_task_preview` and `poll_events`
 - Node Library visual shell
 - Swift `RustBridge` for C ABI calls
 
@@ -68,6 +72,16 @@ Native C smoke test:
 init={"data":{"initialized":true},"ok":true}
 path={"data":"/Users/wyattzhang/ScripTron","ok":true}
 files={"data":[],"ok":true}
+```
+
+Expanded edit/run smoke test:
+
+```text
+create -> ok
+save -> ok
+open -> returns edited run/note cells
+run_task_preview -> queued 3 events
+poll_events -> thinking, tool_result(build_task), complete
 ```
 
 ## Blocker
@@ -89,7 +103,7 @@ cd macos/ScripTronNative
 
 ## Next Steps
 
-1. Add execution streaming over FFI.
-2. Add editable SwiftUI cell editor and save through `save_tron_file`.
-3. Convert Settings provider cards to SwiftUI and call auth/config FFI methods.
+1. Replace `run_task_preview` with real agent execution streaming.
+2. Convert Settings provider cards to SwiftUI and call auth/config FFI methods.
+3. Populate Node Library from `list_tools` and support install/remove flows.
 4. Package as a real `.app` bundle using Xcode once the local toolchain is healthy.

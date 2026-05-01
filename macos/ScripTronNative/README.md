@@ -73,8 +73,10 @@ The current FFI bridge exposes:
 - `get_active_config`
 - `set_active_config`
 - `build_task`
+- `run_task_preview`
+- `poll_events`
 
-Execution streaming is the next bridge step. It should use either callback registration or a polling event queue exposed through FFI.
+`run_task_preview` and `poll_events` are the first polling queue version. Real agent execution should reuse the same event shape and replace preview events with live `agent-loop` output.
 
 ## Build
 
@@ -103,5 +105,9 @@ The Rust library has been verified from a native C process:
 scriptron_init -> ok
 get_workspace_path -> /Users/wyattzhang/ScripTron
 list_workspace_files -> []
+create_tron_file -> ok
+save_tron_file -> ok
+open_tron_file -> edited cells returned
+run_task_preview -> queued 3 events
+poll_events -> thinking/tool_result/complete
 ```
-
