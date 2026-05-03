@@ -2,10 +2,7 @@ use async_trait::async_trait;
 use cli_registry::ToolManifest;
 use process_runner::{ProcessConfig, ProcessRunner};
 use serde::{Deserialize, Serialize};
-use std::{
-    path::PathBuf,
-    time::{SystemTime, UNIX_EPOCH},
-};
+use std::path::PathBuf;
 
 // ── Internal message format (Anthropic-style, provider-agnostic internally) ───
 //
@@ -74,24 +71,13 @@ impl LlmProvider for CliModelProvider {
         _max_tokens: u32,
     ) -> Result<LlmResponse, String> {
         let prompt = build_cli_model_prompt(system, messages, tools);
-        let output =
-            if self.manifest.name == "codex-cli" || self.manifest.command.ends_with("/codex") {
-                run_codex_model_cli(
-                    &self.manifest.command,
-                    &self.project_path,
-                    &prompt,
-                    &self.runner,
-                )
-                .await?
-            } else {
-                run_generic_model_cli(
-                    &self.manifest.command,
-                    &self.project_path,
-                    &prompt,
-                    &self.runner,
-                )
-                .await?
-            };
+        let output = run_generic_model_cli(
+            &self.manifest.command,
+            &self.project_path,
+            &prompt,
+            &self.runner,
+        )
+        .await?;
 
         Ok(LlmResponse {
             content: vec![serde_json::json!({"type": "text", "text": output})],
@@ -118,46 +104,6 @@ async fn run_generic_model_cli(
         return Err(result.combined_output());
     }
     Ok(result.combined_output())
-}
-
-async fn run_codex_model_cli(
-    command: &str,
-    project_path: &PathBuf,
-    prompt: &str,
-    runner: &ProcessRunner,
-) -> Result<String, String> {
-    let last_message_path = cli_last_message_path();
-    let args = vec![
-        "exec".to_string(),
-        "--cd".to_string(),
-        project_path.to_string_lossy().into_owned(),
-        "--sandbox".to_string(),
-        "workspace-write".to_string(),
-        "-c".to_string(),
-        "approval_policy=\"never\"".to_string(),
-        "--skip-git-repo-check".to_string(),
-        "--color".to_string(),
-        "never".to_string(),
-        "--output-last-message".to_string(),
-        last_message_path.to_string_lossy().into_owned(),
-        prompt.to_string(),
-    ];
-    let result = runner
-        .run(
-            ProcessConfig::new(command, args)
-                .with_working_dir(project_path.clone())
-                .with_timeout(240),
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-    let final_message = tokio::fs::read_to_string(&last_message_path).await.ok();
-    let _ = tokio::fs::remove_file(&last_message_path).await;
-    if !result.success() {
-        return Err(result.combined_output());
-    }
-    Ok(final_message
-        .filter(|text| !text.trim().is_empty())
-        .unwrap_or_else(|| result.combined_output()))
 }
 
 fn build_cli_model_prompt(
@@ -203,18 +149,6 @@ fn message_content_to_text(content: &serde_json::Value) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
-}
-
-fn cli_last_message_path() -> PathBuf {
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_millis())
-        .unwrap_or_default();
-    std::env::temp_dir().join(format!(
-        "scriptron-model-cli-{}-{}.txt",
-        std::process::id(),
-        millis
-    ))
 }
 
 // ── Anthropic provider ────────────────────────────────────────────────────────

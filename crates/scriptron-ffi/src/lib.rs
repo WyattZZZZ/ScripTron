@@ -120,12 +120,10 @@ async fn dispatch(request: RpcRequest) -> Result<Value, String> {
             core.remove_skill(name).await?;
             Ok(json!(null))
         }
-        "codex_login_status" => {
-            serde_json::to_value(core.codex_login_status().await?).map_err(|e| e.to_string())
-        }
-        "start_codex_login" => {
-            core.start_codex_login().await?;
-            Ok(json!(null))
+        "run_plugin_login" => {
+            let name = required_string(&request.params, "name")?;
+            let output = core.run_plugin_login(name).await?;
+            serde_json::to_value(output).map_err(|e| e.to_string())
         }
         "get_auth_status" => {
             serde_json::to_value(core.get_auth_status().await).map_err(|e| e.to_string())

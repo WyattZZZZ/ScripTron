@@ -148,6 +148,9 @@ final class AppModel: ObservableObject {
     @Published var tronhubModels: [TronhubEntry] = []
     @Published var tronhubSkills: [TronhubEntry] = []
     @Published var activeConfig: ActiveConfig?
+    @Published var providerStatuses: [ProviderStatus] = []
+    @Published var pluginLoginRunning: String? = nil
+    @Published var pluginLoginOutput: (name: String, output: String)? = nil
     @Published var installManifestDraft = AppModel.defaultManifestDraft
     @Published var mentionSearch = MentionSearchResult(tools: [], files: [], cloud_suggestions: [])
     @Published var functionMentions: [MentionItem] = []
@@ -160,6 +163,7 @@ final class AppModel: ObservableObject {
     ]
     @Published var status = "Starting"
     @Published var errorMessage: String?
+    @Published var focusedBlockID: UUID?
 
     private let bridge = RustBridge.shared
     private var externalTabStates: [String: ExternalTabState] = [:]
@@ -283,6 +287,7 @@ final class AppModel: ObservableObject {
     func loadWorkspaceManagementData() {
         refreshRegistry()
         loadActiveConfig()
+        loadProviderStatuses()
         refreshSkills()
         refreshTronhub()
     }
@@ -300,6 +305,74 @@ final class AppModel: ObservableObject {
     func loadActiveConfig() {
         do {
             activeConfig = try bridge.call("get_active_config", as: ActiveConfig.self)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func loadProviderStatuses() {
+        do {
+            providerStatuses = try bridge.call("get_auth_status", as: [ProviderStatus].self)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func setActiveConfig(provider: String, model: String) {
+        do {
+            try bridge.callVoid("set_active_config", params: ["provider": provider, "model": model])
+            loadActiveConfig()
+            status = "已切换到 \(model)"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func storeApiKey(_ key: String, for provider: String) {
+        do {
+            try bridge.callVoid("store_api_key", params: ["provider": provider, "api_key": key])
+            loadProviderStatuses()
+            status = "\(provider) 已连接"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func runPluginLogin(_ name: String) {
+        pluginLoginRunning = name
+        status = "正在登录 \(name)..."
+        let bridge = bridge
+        Task.detached(priority: .userInitiated) {
+            do {
+                let output = try bridge.call(
+                    "run_plugin_login",
+                    params: ["name": name],
+                    as: String.self
+                )
+                await MainActor.run {
+                    self.pluginLoginRunning = nil
+                    self.pluginLoginOutput = (name: name, output: output)
+                    self.status = "\(name) 登录完成"
+                }
+            } catch {
+                await MainActor.run {
+                    self.pluginLoginRunning = nil
+                    self.pluginLoginOutput = (name: name, output: error.localizedDescription)
+                    self.errorMessage = error.localizedDescription
+                    self.status = "\(name) 登录失败"
+                }
+            }
+        }
+    }
+
+    func disconnectProvider(_ provider: String) {
+        do {
+            try bridge.callVoid("disconnect_provider", params: ["provider": provider])
+            loadProviderStatuses()
+            if activeConfig?.provider == provider {
+                loadActiveConfig()
+            }
+            status = "\(provider) 已断开"
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -391,15 +464,6 @@ final class AppModel: ObservableObject {
 
     func activateModelCLI(_ manifest: CLIManifest) {
         do {
-            if manifest.name == "codex-cli" {
-                let loginStatus = try bridge.call("codex_login_status", as: String.self)
-                if !loginStatus.localizedCaseInsensitiveContains("logged in") {
-                    try bridge.callVoid("start_codex_login")
-                    status = "Codex login started"
-                    errorMessage = "Codex CLI needs OAuth login. Complete the browser login, then activate codex-cli again."
-                    return
-                }
-            }
             try bridge.callVoid("set_active_config", params: ["provider": "openai", "model": manifest.name])
             loadActiveConfig()
             status = "Model set to \(manifest.name)"
@@ -1259,7 +1323,20 @@ final class AppModel: ObservableObject {
     }
 
     func continueMarkdownLine(after block: DocumentBlock) {
-        insertMarkdownLine(after: block)
+        // If this is the trailing blank (last empty block), inserting after it would be
+        // immediately collapsed by ensureTrailingBlankLine. Insert before it instead so
+        // the new block becomes the new trailing blank's predecessor and stays alive.
+        let isTrailingBlank = documentBlocks.last?.id == block.id
+            && block.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        if isTrailingBlank, let index = documentBlocks.firstIndex(where: { $0.id == block.id }) {
+            let newBlock = DocumentBlock(kind: .markdownLine, content: "")
+            documentBlocks.insert(newBlock, at: index)
+            focusedBlockID = newBlock.id
+            ensureTrailingBlankLine()
+            markActiveTabDirty()
+        } else {
+            insertMarkdownLine(after: block)
+        }
     }
 
     func continueListBlock(after block: DocumentBlock, ordered: Bool) {
