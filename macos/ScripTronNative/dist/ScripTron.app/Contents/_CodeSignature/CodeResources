@@ -6,7 +6,7 @@
 	<dict>
 		<key>Resources/bin/scriptron</key>
 		<data>
-		ylGNSmfiT7oKS/rBkZYHncCAqWI=
+		EXCuHsQcIU91tas86oqd/QZXnOE=
 		</data>
 	</dict>
 	<key>files2</key>
@@ -15,16 +15,16 @@
 		<dict>
 			<key>cdhash</key>
 			<data>
-			rm10avRVBFqPd4MjT6AQDk6eHzo=
+			b5VliDeegwzFI6YXAm7fC3ifQDQ=
 			</data>
 			<key>requirement</key>
-			<string>cdhash H"ae6d746af455045a8f7783234fa0100e4e9e1f3a"</string>
+			<string>cdhash H"6f956588379e830cc523a617026edf0b789f4034"</string>
 		</dict>
 		<key>Resources/bin/scriptron</key>
 		<dict>
 			<key>hash2</key>
 			<data>
-			M4g6sO9bgeVpO6q5hrkO7golDynBIXKu368txsbtna4=
+			T/ExYyGsjjPIJFdw/p/KAncEu0ExJvBHnuV+SctH6SY=
 			</data>
 		</dict>
 	</dict>

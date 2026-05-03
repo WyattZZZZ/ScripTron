@@ -887,8 +887,8 @@ private struct NotebookEditorView: View {
                         EmptyDocumentCanvas()
                             .environmentObject(model)
                     } else {
-                        ForEach(model.documentBlocks) { block in
-                            DocumentFlowRow(block: block)
+                        ForEach(Array(model.documentBlocks.enumerated()), id: \.element.id) { index, block in
+                            DocumentFlowRow(block: block, blockIndex: index)
                                 .environmentObject(model)
                         }
                     }
@@ -934,6 +934,7 @@ private struct NotebookEditorView: View {
 private struct DocumentFlowRow: View {
     @EnvironmentObject private var model: AppModel
     let block: AppModel.DocumentBlock
+    let blockIndex: Int
     @State private var hovering = false
 
     private var selected: Bool {
@@ -975,7 +976,7 @@ private struct DocumentFlowRow: View {
             HStack(alignment: .top, spacing: 0) {
                 switch block.kind {
                 case .markdownLine:
-                    MarkdownLineView(block: block, text: content)
+                    MarkdownLineView(block: block, text: content, blockIndex: blockIndex)
                         .environmentObject(model)
                 case .heading(let level):
                     HeadingBlockView(block: block, text: content, level: level)
@@ -1157,6 +1158,19 @@ private struct MarkdownLineView: View {
     @EnvironmentObject private var model: AppModel
     let block: AppModel.DocumentBlock
     @Binding var text: String
+    let blockIndex: Int
+
+    private var isFocusTarget: Bool { model.focusedBlockID == block.id }
+
+    private func moveUp() {
+        guard blockIndex > 0 else { return }
+        model.focusedBlockID = model.documentBlocks[blockIndex - 1].id
+    }
+
+    private func moveDown() {
+        guard blockIndex < model.documentBlocks.count - 1 else { return }
+        model.focusedBlockID = model.documentBlocks[blockIndex + 1].id
+    }
 
     var body: some View {
         if text.trimmingCharacters(in: .whitespaces) == "---" {
@@ -1178,8 +1192,12 @@ private struct MarkdownLineView: View {
                 text: $text,
                 font: nsFontForLine(text),
                 textColor: NSColor(foregroundForLine(text)),
+                isFocusTarget: isFocusTarget,
                 onSubmit: { model.continueMarkdownLine(after: block) },
-                onEmptyBackspace: { model.deleteEmptyMarkdownBlockBefore(block) }
+                onEmptyBackspace: { model.deleteEmptyMarkdownBlockBefore(block) },
+                onMoveUp: moveUp,
+                onMoveDown: moveDown,
+                onDidFocus: { model.focusedBlockID = nil }
             )
                 .padding(.vertical, lineVerticalPadding(text))
                 .padding(.horizontal, horizontalPadding(text))
@@ -1487,8 +1505,12 @@ private struct BackspaceAwareTextField: NSViewRepresentable {
     @Binding var text: String
     let font: NSFont
     let textColor: NSColor
+    var isFocusTarget: Bool = false
     let onSubmit: () -> Void
     let onEmptyBackspace: () -> Void
+    var onMoveUp: () -> Void = {}
+    var onMoveDown: () -> Void = {}
+    var onDidFocus: () -> Void = {}
 
     func makeNSView(context: Context) -> KeyAwareNSTextField {
         let field = KeyAwareNSTextField()
@@ -1501,6 +1523,9 @@ private struct BackspaceAwareTextField: NSViewRepresentable {
         field.action = #selector(Coordinator.submit)
         field.onEmptyBackspace = onEmptyBackspace
         field.onSubmitKey = onSubmit
+        field.onMoveUp = onMoveUp
+        field.onMoveDown = onMoveDown
+        field.onDidFocus = onDidFocus
         return field
     }
 
@@ -1513,6 +1538,15 @@ private struct BackspaceAwareTextField: NSViewRepresentable {
         nsView.textColor = textColor
         nsView.onEmptyBackspace = onEmptyBackspace
         nsView.onSubmitKey = onSubmit
+        nsView.onMoveUp = onMoveUp
+        nsView.onMoveDown = onMoveDown
+        nsView.onDidFocus = onDidFocus
+
+        if isFocusTarget {
+            DispatchQueue.main.async {
+                nsView.window?.makeFirstResponder(nsView)
+            }
+        }
     }
 
     func makeCoordinator() -> Coordinator {
@@ -1542,17 +1576,31 @@ private struct BackspaceAwareTextField: NSViewRepresentable {
 private final class KeyAwareNSTextField: NSTextField {
     var onEmptyBackspace: () -> Void = {}
     var onSubmitKey: () -> Void = {}
+    var onMoveUp: () -> Void = {}
+    var onMoveDown: () -> Void = {}
+    var onDidFocus: () -> Void = {}
+
+    override func becomeFirstResponder() -> Bool {
+        let result = super.becomeFirstResponder()
+        if result { onDidFocus() }
+        return result
+    }
 
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 51, stringValue.isEmpty {
-            onEmptyBackspace()
-            return
+        switch event.keyCode {
+        case 51:  // Backspace
+            if stringValue.isEmpty { onEmptyBackspace() }
+            else { super.keyDown(with: event) }
+        case 36, 76:  // Return / Enter
+            if stringValue.isEmpty { onEmptyBackspace() }
+            else { onSubmitKey() }
+        case 126:  // Up arrow
+            onMoveUp()
+        case 125:  // Down arrow
+            onMoveDown()
+        default:
+            super.keyDown(with: event)
         }
-        if event.keyCode == 36 || event.keyCode == 76 {
-            onSubmitKey()
-            return
-        }
-        super.keyDown(with: event)
     }
 }
 

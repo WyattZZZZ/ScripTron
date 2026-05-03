@@ -387,10 +387,14 @@ private struct CLIManagementView: View {
     @EnvironmentObject private var model: AppModel
     @State private var showingInstaller = false
 
+    private var toolCLIs: [CLIManifest] {
+        model.cliRegistry.filter { $0.kind != "model" }
+    }
+
     var body: some View {
         ManagementPage(title: model.tr("CLI Management", "CLI 管理"), subtitle: model.tr("Everything here is loaded from the workspace .register folder.", "这里的所有内容都从工作区 .register 文件夹加载。")) {
             HStack {
-                ManagementPill(model.tr("Registry", "注册表"), value: model.tr("\(model.cliRegistry.count) installed", "已安装 \(model.cliRegistry.count) 个"))
+                ManagementPill(model.tr("Registry", "注册表"), value: model.tr("\(toolCLIs.count) installed", "已安装 \(toolCLIs.count) 个"))
                 ManagementPill("Path", value: "\(model.workspacePath)/.register")
                 Spacer()
                 Button { model.refreshRegistry() } label: { Label(model.tr("Refresh", "刷新"), systemImage: "arrow.clockwise") }
@@ -424,7 +428,7 @@ private struct CLIManagementView: View {
                 .background(Color.surfaceSoft.opacity(0.72), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
             }
 
-            RegistryListView(items: model.cliRegistry, activeModel: model.activeConfig?.model, onRemove: model.removeCLI, onActivateModel: model.activateModelCLI)
+            RegistryListView(items: toolCLIs, activeModel: model.activeConfig?.model, onRemove: model.removeCLI, onActivateModel: model.activateModelCLI)
         }
         .onAppear { model.loadWorkspaceManagementData() }
     }
@@ -484,16 +488,20 @@ private struct SkillManagementView: View {
 private struct ModelManagementView: View {
     @EnvironmentObject private var model: AppModel
 
-    private var modelCLIs: [CLIManifest] {
+    private var connectedCount: Int {
+        model.providerStatuses.filter(\.connected).count
+    }
+
+    private var installedCliModels: [CLIManifest] {
         model.cliRegistry.filter { $0.kind == "model" }
     }
 
     var body: some View {
-        ManagementPage(title: model.tr("Model Management", "模型管理"), subtitle: model.tr("Models are registry-backed CLIs. Install a model CLI in the market, then set it as the active model here.", "模型是注册表驱动的 CLI。在市场安装模型 CLI，然后在这里设为当前模型。")) {
+        ManagementPage(title: model.tr("Model Management", "模型管理"), subtitle: model.tr("Connect API providers or install CLI model packages from TronHub.", "连接 API Provider 或从 TronHub 安装 CLI 模型插件。")) {
             HStack {
                 ManagementPill(model.tr("Provider", "Provider"), value: model.activeConfig?.provider ?? model.tr("Not loaded", "未加载"))
                 ManagementPill(model.tr("Active Model", "当前模型"), value: model.activeConfig?.model ?? model.tr("Not selected", "未选择"))
-                ManagementPill(model.tr("Available", "可用"), value: "\(model.tronhubModels.count)")
+                ManagementPill(model.tr("Connected", "已连接"), value: "\(connectedCount)/\(model.providerStatuses.count)")
                 Spacer()
                 Button { model.syncTronhub() } label: { Label(model.tr("Sync TronHub", "同步 TronHub"), systemImage: "arrow.triangle.2.circlepath") }
                     .buttonStyle(ManagementButtonStyle(primary: true))
@@ -501,30 +509,340 @@ private struct ModelManagementView: View {
                     .buttonStyle(ManagementButtonStyle())
             }
 
-            if !model.tronhubModels.isEmpty {
-                Text(model.tr("Model Provider Market", "模型 Provider 市场"))
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(Color.appSecondaryText)
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 16)], spacing: 16) {
-                    ForEach(model.tronhubModels) { item in
-                        TronhubCard(entry: item) {
-                            model.installTronhub(item)
-                        }
+            // ── API Providers ─────────────────────────────────────────────────
+            Text(model.tr("API Providers", "API Provider"))
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(Color.appSecondaryText)
+
+            if model.providerStatuses.isEmpty {
+                ProgressView().frame(maxWidth: .infinity, minHeight: 120)
+            } else {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 16)], spacing: 16) {
+                    ForEach(model.providerStatuses) { status in
+                        ProviderCard(status: status)
                     }
                 }
             }
 
-            if modelCLIs.isEmpty {
-                EmptyListView(title: model.tr("No model CLIs registered", "暂无已注册模型 CLI"), subtitle: model.tr("Install a model provider from the Model Provider Market above.", "从上方模型 Provider 市场安装一个模型。"))
-                    .frame(maxWidth: .infinity, minHeight: 260)
-            } else {
-                Text(model.tr("Installed Model Providers", "已安装模型 Provider"))
+            // ── Installed CLI Models ──────────────────────────────────────────
+            if !installedCliModels.isEmpty {
+                Text(model.tr("Installed CLI Models", "已安装的 CLI 模型"))
                     .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(Color.appSecondaryText)
-                RegistryListView(items: modelCLIs, activeModel: model.activeConfig?.model, onRemove: model.removeCLI, onActivateModel: model.activateModelCLI)
+                VStack(spacing: 10) {
+                    ForEach(installedCliModels) { manifest in
+                        InstalledCliModelRow(manifest: manifest)
+                    }
+                }
+            }
+
+            // ── TronHub CLI Models Market ─────────────────────────────────────
+            if !model.tronhubModels.isEmpty {
+                Text(model.tr("CLI Model Plugins", "CLI 模型插件市场"))
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(Color.appSecondaryText)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 16)], spacing: 16) {
+                    ForEach(model.tronhubModels) { item in
+                        TronhubCard(entry: item) { model.installTronhub(item) }
+                    }
+                }
             }
         }
         .onAppear { model.loadWorkspaceManagementData() }
+        .sheet(isPresented: Binding(
+            get: { model.pluginLoginOutput != nil },
+            set: { if !$0 { model.pluginLoginOutput = nil } }
+        )) {
+            PluginLoginOutputSheet()
+        }
+    }
+}
+
+private struct InstalledCliModelRow: View {
+    @EnvironmentObject private var model: AppModel
+    let manifest: CLIManifest
+    @State private var hovering = false
+
+    private var isActive: Bool {
+        model.activeConfig?.model == manifest.name
+    }
+
+    private var supportsLogin: Bool {
+        manifest.args_schema.contains { $0.name == "action" }
+    }
+
+    private var isLoggingIn: Bool {
+        model.pluginLoginRunning == manifest.name
+    }
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "cpu")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(Color.primaryGreen)
+                .frame(width: 42, height: 42)
+                .background(Color.primaryGreen.opacity(0.12), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    Text(manifest.name).font(.system(size: 17, weight: .bold)).foregroundStyle(Color.appText)
+                    if isActive {
+                        Text(model.tr("Active", "当前"))
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(Color.primaryGreen, in: Capsule())
+                    }
+                }
+                Text(manifest.description).font(.system(size: 13)).foregroundStyle(Color.appSecondaryText).lineLimit(2)
+                Text(manifest.command).font(.system(size: 11, design: .monospaced)).foregroundStyle(Color.appSecondaryText.opacity(0.75)).lineLimit(1)
+            }
+            Spacer()
+            HStack(spacing: 8) {
+                if supportsLogin {
+                    Button {
+                        model.runPluginLogin(manifest.name)
+                    } label: {
+                        if isLoggingIn {
+                            HStack(spacing: 6) {
+                                ProgressView().controlSize(.small)
+                                Text(model.tr("Logging in…", "登录中…"))
+                            }
+                        } else {
+                            Label(model.tr("Login", "登录"), systemImage: "person.crop.circle.badge.checkmark")
+                        }
+                    }
+                    .buttonStyle(ManagementButtonStyle())
+                    .disabled(isLoggingIn)
+                }
+                Button(model.tr("Set Active", "设为当前")) {
+                    model.activateModelCLI(manifest)
+                }
+                .buttonStyle(ManagementButtonStyle(primary: !isActive))
+                .disabled(isActive)
+                Button {
+                    model.removeCLI(manifest)
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(ManagementButtonStyle(role: .destructive))
+            }
+        }
+        .padding(16)
+        .background(hovering ? Color.primaryGreen.opacity(0.07) : .white.opacity(0.82), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(isActive ? Color.primaryGreen.opacity(0.5) : Color.hairline.opacity(0.7), lineWidth: isActive ? 1.5 : 1)
+        )
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+    }
+}
+
+private struct PluginLoginOutputSheet: View {
+    @EnvironmentObject private var model: AppModel
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Image(systemName: "person.crop.circle.badge.checkmark")
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(Color.primaryGreen)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(model.tr("Login Output", "登录结果"))
+                        .font(.system(size: 16, weight: .bold))
+                    if let pair = model.pluginLoginOutput {
+                        Text(pair.name)
+                            .font(.system(size: 12, design: .monospaced))
+                            .foregroundStyle(Color.appSecondaryText)
+                    }
+                }
+                Spacer()
+                Button { dismiss() } label: { Image(systemName: "xmark.circle.fill") }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color.appSecondaryText)
+            }
+            ScrollView {
+                Text(model.pluginLoginOutput?.output ?? "")
+                    .font(.system(size: 12, design: .monospaced))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+                    .padding(12)
+            }
+            .frame(minHeight: 200, maxHeight: 400)
+            .background(Color.surfaceSoft.opacity(0.6), in: RoundedRectangle(cornerRadius: 12))
+            HStack {
+                Spacer()
+                Button(model.tr("Close", "关闭")) { dismiss() }
+                    .buttonStyle(ManagementButtonStyle(primary: true))
+            }
+        }
+        .padding(20)
+        .frame(minWidth: 520, minHeight: 320)
+    }
+}
+
+private struct ProviderCard: View {
+    @EnvironmentObject private var model: AppModel
+    let status: ProviderStatus
+
+    @State private var selectedModel: String = ""
+    @State private var showingApiKeyInput = false
+    @State private var apiKeyDraft = ""
+
+    private var isActive: Bool {
+        model.activeConfig?.provider == status.provider
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            // Header row
+            HStack(spacing: 10) {
+                Image(systemName: providerIcon)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(providerColor)
+                    .frame(width: 44, height: 44)
+                    .background(providerColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(status.display_name)
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(Color.appText)
+                    Text(status.provider)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(Color.appSecondaryText.opacity(0.7))
+                }
+                Spacer()
+                // Active badge
+                if isActive {
+                    Text(model.tr("Active", "当前"))
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 4)
+                        .background(Color.primaryGreen, in: Capsule())
+                }
+                // Connection badge
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(status.connected ? Color.primaryGreen : Color.appSecondaryText.opacity(0.4))
+                        .frame(width: 7, height: 7)
+                    Text(status.connected ? model.tr("Connected", "已连接") : model.tr("Not connected", "未连接"))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(status.connected ? Color.primaryGreen : Color.appSecondaryText)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 5)
+                .background(
+                    (status.connected ? Color.primaryGreen : Color.appSecondaryText).opacity(0.09),
+                    in: Capsule()
+                )
+            }
+
+            // Model picker
+            if status.connected || isActive {
+                HStack(spacing: 8) {
+                    Text(model.tr("Model", "模型"))
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(Color.appSecondaryText)
+                    Picker("", selection: $selectedModel) {
+                        ForEach(status.available_models, id: \.self) { m in
+                            Text(m).tag(m)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+
+            // API key input (inline)
+            if showingApiKeyInput {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(model.tr("API Key", "API Key"))
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(Color.appSecondaryText)
+                    SecureField("sk-...", text: $apiKeyDraft)
+                        .textFieldStyle(.plain)
+                        .font(.system(size: 13, design: .monospaced))
+                        .padding(10)
+                        .background(.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 10))
+                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.hairline, lineWidth: 1))
+                    HStack {
+                        Button(model.tr("Cancel", "取消")) {
+                            showingApiKeyInput = false
+                            apiKeyDraft = ""
+                        }
+                        .buttonStyle(ManagementButtonStyle())
+                        Button(model.tr("Save", "保存")) {
+                            model.storeApiKey(apiKeyDraft, for: status.provider)
+                            showingApiKeyInput = false
+                            apiKeyDraft = ""
+                        }
+                        .buttonStyle(ManagementButtonStyle(primary: true))
+                        .disabled(apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    }
+                }
+            }
+
+            Spacer(minLength: 0)
+
+            // Action buttons
+            HStack(spacing: 8) {
+                if status.connected {
+                    Button(model.tr("Set Active", "设为当前")) {
+                        model.setActiveConfig(provider: status.provider, model: selectedModel)
+                    }
+                    .buttonStyle(ManagementButtonStyle(primary: !isActive))
+                    .disabled(isActive && model.activeConfig?.model == selectedModel)
+
+                    Button(model.tr("Disconnect", "断开")) {
+                        model.disconnectProvider(status.provider)
+                    }
+                    .buttonStyle(ManagementButtonStyle(role: .destructive))
+                } else {
+                    Button(model.tr("Connect", "连接")) {
+                        showingApiKeyInput.toggle()
+                    }
+                    .buttonStyle(ManagementButtonStyle(primary: true))
+                }
+            }
+        }
+        .padding(18)
+        .frame(minHeight: 180, alignment: .topLeading)
+        .background(.white.opacity(0.82), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 18)
+                .stroke(isActive ? Color.primaryGreen.opacity(0.5) : Color.hairline.opacity(0.7), lineWidth: isActive ? 1.5 : 1)
+        )
+        .onAppear {
+            selectedModel = (isActive ? model.activeConfig?.model : nil) ?? status.default_model
+        }
+        .onChange(of: model.activeConfig?.model) { newModel in
+            if isActive, let m = newModel { selectedModel = m }
+        }
+    }
+
+    private var providerIcon: String {
+        switch status.provider {
+        case "anthropic": return "brain"
+        case "gemini": return "sparkles"
+        case "openai": return "circle.hexagongrid"
+        case "deepseek": return "waveform"
+        case "openrouter": return "arrow.triangle.branch"
+        default: return "cpu"
+        }
+    }
+
+    private var providerColor: Color {
+        switch status.provider {
+        case "anthropic": return Color(red: 0.8, green: 0.5, blue: 0.2)
+        case "gemini": return Color(red: 0.26, green: 0.52, blue: 0.96)
+        case "openai": return Color(red: 0.07, green: 0.73, blue: 0.50)
+        case "deepseek": return Color(red: 0.45, green: 0.3, blue: 0.95)
+        case "openrouter": return Color(red: 0.55, green: 0.35, blue: 0.75)
+        default: return Color.primaryGreen
+        }
     }
 }
 
@@ -879,43 +1197,6 @@ private struct SkillRow: View {
     }
 }
 
-private struct MarketplaceCard: View {
-    @EnvironmentObject private var model: AppModel
-    let item: MarketplaceCLIItem
-    let installed: Bool
-    let install: () -> Void
-    @State private var hovering = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Image(systemName: item.icon)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(Color.primaryGreen)
-                    .frame(width: 44, height: 44)
-                    .background(Color.primaryGreen.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                Spacer()
-                KindBadge(kind: item.kind)
-            }
-            Text(item.name).font(.system(size: 18, weight: .bold)).foregroundStyle(Color.appText)
-            Text(item.description)
-                .font(.system(size: 13))
-                .foregroundStyle(Color.appSecondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-            Spacer(minLength: 6)
-            Button(installed ? model.tr("Installed", "已安装") : model.tr("Install", "安装")) { install() }
-                .buttonStyle(ManagementButtonStyle(primary: !installed))
-                .disabled(installed)
-        }
-        .padding(18)
-        .frame(minHeight: 210, alignment: .topLeading)
-        .background(hovering ? Color.primaryGreen.opacity(0.07) : .white.opacity(0.82), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.hairline.opacity(0.7), lineWidth: 1))
-        .onHover { hovering = $0 }
-        .animation(.easeOut(duration: 0.12), value: hovering)
-    }
-}
-
 private struct ManagementPill: View {
     let title: String
     let value: String
@@ -952,67 +1233,22 @@ private struct KindBadge: View {
 
 private struct ManagementButtonStyle: ButtonStyle {
     var primary = false
+    var role: ButtonRole? = nil
 
     func makeBody(configuration: Configuration) -> some View {
+        let isDestructive = role == .destructive
         configuration.label
             .font(.system(size: 12, weight: .bold))
-            .foregroundStyle(primary ? .white : Color.primaryGreen)
+            .foregroundStyle(isDestructive ? Color.red : (primary ? .white : Color.primaryGreen))
             .padding(.horizontal, 12)
             .frame(height: 34)
-            .background(primary ? Color.primaryGreen.opacity(configuration.isPressed ? 0.82 : 1) : Color.primaryGreen.opacity(configuration.isPressed ? 0.16 : 0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .background(
+                isDestructive
+                    ? Color.red.opacity(configuration.isPressed ? 0.16 : 0.10)
+                    : (primary ? Color.primaryGreen.opacity(configuration.isPressed ? 0.82 : 1) : Color.primaryGreen.opacity(configuration.isPressed ? 0.16 : 0.10)),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+            )
     }
-}
-
-private struct MarketplaceCLIItem: Identifiable {
-    let id: String
-    let name: String
-    let kind: String
-    let icon: String
-    let description: String
-    let manifestJSON: String
-
-    static let defaults: [MarketplaceCLIItem] = [
-        MarketplaceCLIItem(
-            id: "codex-cli",
-            name: "codex-cli",
-            kind: "model",
-            icon: "cpu",
-            description: "OpenAI Codex CLI adapter. Usable as a model entry and as a delegated project agent.",
-            manifestJSON: #"""
-{"name":"codex-cli","kind":"model","description":"Run Codex non-interactively against the current ScripTron project.","version":"0.128.0-alpha.1","command":"/Applications/Codex.app/Contents/Resources/codex","author":"OpenAI","homepage":"https://openai.com/codex","args_schema":[{"name":"prompt","description":"Task prompt for Codex.","required":true,"type":"string"},{"name":"project_path","description":"Project directory to use as Codex working directory.","required":false,"type":"string"}],"examples":["codex exec --cd ./project --sandbox workspace-write -c 'approval_policy=\"never\"' \"Summarize this project\""]}
-"""#
-        ),
-        MarketplaceCLIItem(
-            id: "excel-cli",
-            name: "excel-cli",
-            kind: "tool",
-            icon: "tablecells",
-            description: "Spreadsheet inspection, conversion, and lightweight reporting commands.",
-            manifestJSON: #"""
-{"name":"excel-cli","kind":"tool","description":"Spreadsheet inspection, conversion, and lightweight reporting commands.","version":"0.1.0","command":"scriptron-excel","args_schema":[{"name":"path","description":"Workbook or CSV path.","required":true,"type":"string"},{"name":"task","description":"What to inspect or generate.","required":true,"type":"string"}],"examples":["excel-cli --path ./report.xlsx --task summarize"]}
-"""#
-        ),
-        MarketplaceCLIItem(
-            id: "pdf-cli",
-            name: "pdf-cli",
-            kind: "tool",
-            icon: "doc.richtext",
-            description: "PDF text extraction and document summary helper.",
-            manifestJSON: #"""
-{"name":"pdf-cli","kind":"tool","description":"PDF text extraction and document summary helper.","version":"0.1.0","command":"scriptron-pdf","args_schema":[{"name":"path","description":"PDF file path.","required":true,"type":"string"},{"name":"task","description":"Extraction or summary request.","required":true,"type":"string"}],"examples":["pdf-cli --path ./packet.pdf --task extract"]}
-"""#
-        ),
-        MarketplaceCLIItem(
-            id: "local-llm-cli",
-            name: "local-llm-cli",
-            kind: "model",
-            icon: "memorychip",
-            description: "Template model adapter for a local model server or custom inference command.",
-            manifestJSON: #"""
-{"name":"local-llm-cli","kind":"model","description":"Template model adapter for a local model server or custom inference command.","version":"0.1.0","command":"/absolute/path/to/local-model-cli","args_schema":[{"name":"prompt","description":"Prompt to send to the local model.","required":true,"type":"string"}],"examples":["local-model-cli --prompt \"Summarize this project\""]}
-"""#
-        )
-    ]
 }
 
 private struct FloatingAgentChat: View {

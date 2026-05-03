@@ -72,6 +72,16 @@ struct ActiveConfig: Decodable {
     let model: String
 }
 
+struct ProviderStatus: Codable, Identifiable {
+    var id: String { provider }
+    let provider: String
+    let display_name: String
+    let connected: Bool
+    let auth_method: String
+    let available_models: [String]
+    let default_model: String
+}
+
 struct CLIArgSchema: Codable, Identifiable {
     var id: String { name }
     let name: String

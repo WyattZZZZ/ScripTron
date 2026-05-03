@@ -177,7 +177,6 @@ impl ScriptronCore {
         migrate_legacy_registry(&legacy_registry_dir, &registry_dir).await?;
         let bootstrap_runner = ProcessRunner::new();
         let _ = sync_tronhub_cache(&workspace_dir, &bootstrap_runner).await;
-        let _ = ensure_at_least_one_model(&workspace_dir, &registry_dir).await;
         tokio::fs::create_dir_all(&auth_dir).await?;
 
         Ok(Self {
@@ -269,9 +268,6 @@ impl ScriptronCore {
         sync_tronhub_cache(&self.workspace_dir, &self.runner)
             .await
             .map_err(|e| e.to_string())?;
-        ensure_at_least_one_model(&self.workspace_dir, &self.workspace_dir.join(".register"))
-            .await
-            .map_err(|e| e.to_string())?;
         self.registry
             .write()
             .await
@@ -317,31 +313,39 @@ impl ScriptronCore {
         Ok(())
     }
 
-    pub async fn codex_login_status(&self) -> Result<String, String> {
-        self.runner
-            .run(
-                ProcessConfig::new(
-                    codex_path(),
-                    vec!["login".to_string(), "status".to_string()],
-                )
-                .with_working_dir(self.workspace_dir.clone())
-                .with_timeout(10),
-            )
-            .await
-            .map(|result| result.combined_output())
-            .map_err(|e| e.to_string())
-    }
-
-    pub async fn start_codex_login(&self) -> Result<(), String> {
-        std::process::Command::new(codex_path())
-            .arg("login")
-            .spawn()
-            .map(|_| ())
-            .map_err(|e| e.to_string())
-    }
-
     pub async fn get_auth_status(&self) -> Vec<ProviderStatus> {
         all_provider_statuses(&self.auth).await
+    }
+
+    /// Run a TronHub plugin's `--action login` flow (OAuth or device code).
+    pub async fn run_plugin_login(&self, name: String) -> Result<String, String> {
+        let manifest = {
+            let registry = self.registry.read().await;
+            registry
+                .get_tool(&name)
+                .cloned()
+                .ok_or_else(|| format!("Plugin '{}' not found", name))?
+        };
+        let working_dir = std::path::Path::new(&manifest.command)
+            .parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| self.workspace_dir.clone());
+        let result = self
+            .runner
+            .run(
+                ProcessConfig::new(
+                    &manifest.command,
+                    vec!["--action".to_string(), "login".to_string()],
+                )
+                .with_working_dir(working_dir)
+                .with_timeout(300),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        if !result.success() {
+            return Err(result.combined_output());
+        }
+        Ok(result.combined_output())
     }
 
     pub async fn store_api_key(&self, provider: String, api_key: String) -> Result<(), String> {
@@ -756,40 +760,13 @@ impl ScriptronCore {
         project_path: &Path,
     ) -> Result<Arc<dyn LlmProvider + Send + Sync>, String> {
         let cfg = self.config.read().await.clone();
-        if cfg.active_model == "codex-cli" {
-            let _ = ensure_codex_manifest(&self.workspace_dir.join(".register")).await;
-            let _ = self.registry.write().await.reload().await;
-        }
+        // If the active model matches an installed CLI model plugin, use it.
         let model_cli = {
             let registry = self.registry.read().await;
             registry
                 .get_tool(&cfg.active_model)
                 .filter(|tool| tool.kind == CliKind::Model)
                 .cloned()
-                .or_else(|| {
-                    registry
-                        .list_tools()
-                        .iter()
-                        .find(|tool| tool.kind == CliKind::Model)
-                        .cloned()
-                })
-        };
-        let model_cli = if model_cli.is_none() {
-            let _ = ensure_at_least_one_model(
-                &self.workspace_dir,
-                &self.workspace_dir.join(".register"),
-            )
-            .await;
-            let _ = self.registry.write().await.reload().await;
-            self.registry
-                .read()
-                .await
-                .list_tools()
-                .iter()
-                .find(|tool| tool.kind == CliKind::Model)
-                .cloned()
-        } else {
-            model_cli
         };
         if let Some(model_cli) = model_cli {
             return Ok(Arc::new(CliModelProvider::new(
@@ -797,17 +774,14 @@ impl ScriptronCore {
                 project_path.to_path_buf(),
             )));
         }
-        let token = self
-            .auth
-            .access_token(&cfg.active_provider)
-            .await
-            .map_err(|e| {
-                format!(
-                    "No credentials for {}. Connect this provider in Model Management before running the embedded agent. ({})",
-                    cfg.active_provider.id(),
-                    e
-                )
-            })?;
+        // Otherwise, use the active provider's API key.
+        let token = self.auth.access_token(&cfg.active_provider).await.map_err(|e| {
+            format!(
+                "No credentials for {}. Connect this provider in Model Management before running the embedded agent. ({})",
+                cfg.active_provider.id(),
+                e
+            )
+        })?;
         let provider: Arc<dyn LlmProvider + Send + Sync> = match cfg.active_provider {
             Provider::Anthropic => {
                 Arc::new(AnthropicProvider::new(token).with_model(cfg.active_model))
@@ -1074,7 +1048,6 @@ async fn ensure_workspace_layout(workspace_dir: &Path) -> anyhow::Result<()> {
     tokio::fs::create_dir_all(workspace_dir.join(".register")).await?;
     tokio::fs::create_dir_all(workspace_dir.join(".skills")).await?;
     tokio::fs::create_dir_all(workspace_dir.join(".tronhub")).await?;
-    ensure_codex_manifest(&workspace_dir.join(".register")).await?;
 
     let troner_path = workspace_dir.join(".troner.json");
     if !troner_path.exists() {
@@ -1106,37 +1079,6 @@ async fn ensure_workspace_layout(workspace_dir: &Path) -> anyhow::Result<()> {
         }
     }
 
-    Ok(())
-}
-
-async fn ensure_codex_manifest(registry_dir: &Path) -> anyhow::Result<()> {
-    let tool_dir = registry_dir.join("codex-cli");
-    let manifest = tool_dir.join("manifest.json");
-    if manifest.exists() {
-        let existing = tokio::fs::read_to_string(&manifest).await?;
-        if serde_json::from_str::<ToolManifest>(&existing).is_ok() {
-            return Ok(());
-        }
-    }
-    tokio::fs::create_dir_all(&tool_dir).await?;
-    let command = codex_path();
-    let json = serde_json::json!({
-        "name": "codex-cli",
-        "kind": "model",
-        "description": "Run Codex non-interactively against the current ScripTron project.",
-        "version": "0.128.0-alpha.1",
-        "command": command,
-        "author": "OpenAI",
-        "homepage": "https://openai.com/codex",
-        "args_schema": [
-            { "name": "prompt", "description": "Prompt to pass to codex exec.", "required": true, "type": "string" },
-            { "name": "cd", "description": "Working directory for Codex.", "required": false, "type": "string" }
-        ],
-        "examples": [
-            "codex exec --cd ./project --sandbox workspace-write -c 'approval_policy=\"never\"' \"Summarize this project\""
-        ]
-    });
-    tokio::fs::write(manifest, serde_json::to_string_pretty(&json)?).await?;
     Ok(())
 }
 
@@ -1172,25 +1114,6 @@ async fn sync_tronhub_cache(workspace_dir: &Path, runner: &ProcessRunner) -> any
         .await
         .map(|_| ())
         .map_err(|e| anyhow::anyhow!(e.to_string()))
-}
-
-async fn ensure_at_least_one_model(
-    workspace_dir: &Path,
-    registry_dir: &Path,
-) -> anyhow::Result<()> {
-    let registry = CliRegistry::load(registry_dir).await?;
-    if registry
-        .list_tools()
-        .iter()
-        .any(|tool| tool.kind == cli_registry::CliKind::Model)
-    {
-        return Ok(());
-    }
-    let entries = list_tronhub_entries(workspace_dir, "model").await?;
-    if let Some(entry) = entries.first() {
-        install_tronhub_entry(workspace_dir, "model", &entry.name).await?;
-    }
-    Ok(())
 }
 
 async fn list_tronhub_entries(
@@ -1249,7 +1172,24 @@ async fn install_tronhub_entry(workspace_dir: &Path, kind: &str, name: &str) -> 
     copy_dir_all(&source_dir, &target_dir).await?;
     if kind == "cli" || kind == "model" {
         let manifest = target_dir.join("manifest.json");
-        if !manifest.exists() {
+        let needs_generate = if manifest.exists() {
+            // Regenerate if the stored command is not an executable file.
+            let raw = tokio::fs::read_to_string(&manifest).await.unwrap_or_default();
+            serde_json::from_str::<serde_json::Value>(&raw)
+                .ok()
+                .and_then(|j| j.get("command").and_then(|v| v.as_str()).map(str::to_string))
+                .map(|cmd| {
+                    let p = std::path::Path::new(&cmd);
+                    !p.exists() || p.metadata().map(|m| {
+                        use std::os::unix::fs::PermissionsExt;
+                        m.permissions().mode() & 0o111 == 0
+                    }).unwrap_or(true)
+                })
+                .unwrap_or(true)
+        } else {
+            true
+        };
+        if needs_generate {
             let generated = generated_cli_manifest(kind, name, &target_dir);
             tokio::fs::write(manifest, serde_json::to_string_pretty(&generated)?).await?;
         }
@@ -1315,10 +1255,37 @@ async fn read_skill_description(path: &Path) -> anyhow::Result<Option<String>> {
 }
 
 fn generated_cli_manifest(kind: &str, name: &str, installed_dir: &Path) -> serde_json::Value {
-    let command = first_child_path(installed_dir)
-        .unwrap_or_else(|| installed_dir.join(name))
-        .to_string_lossy()
-        .into_owned();
+    // Read the plugin's own metadata file (model.json or cli.json) for the declared command.
+    let meta_command = ["model.json", "cli.json"]
+        .iter()
+        .filter_map(|fname| std::fs::read_to_string(installed_dir.join(fname)).ok())
+        .filter_map(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .filter_map(|json| {
+            json.get("command")
+                .and_then(|v| v.as_str())
+                .map(str::to_string)
+        })
+        .next();
+
+    let command = if let Some(rel) = meta_command {
+        // Resolve relative paths (e.g. "./run.sh") against the installed directory.
+        if rel.starts_with("./") || rel.starts_with("../") {
+            installed_dir
+                .join(&rel)
+                .canonicalize()
+                .unwrap_or_else(|_| installed_dir.join(&rel))
+                .to_string_lossy()
+                .into_owned()
+        } else {
+            rel
+        }
+    } else {
+        first_child_path(installed_dir)
+            .unwrap_or_else(|| installed_dir.join(name))
+            .to_string_lossy()
+            .into_owned()
+    };
+
     serde_json::json!({
         "name": name,
         "kind": if kind == "model" { "model" } else { "tool" },
@@ -1626,15 +1593,6 @@ fn marketplace_suggestions(query: &str) -> Vec<MentionItem> {
             modules: Vec::new(),
         })
         .collect()
-}
-
-fn codex_path() -> String {
-    let bundled = Path::new("/Applications/Codex.app/Contents/Resources/codex");
-    if bundled.exists() {
-        bundled.to_string_lossy().into_owned()
-    } else {
-        "codex".into()
-    }
 }
 
 fn format_agent_event(event: &ExecutionEvent) -> Option<String> {
