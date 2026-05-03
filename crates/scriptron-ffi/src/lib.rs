@@ -59,11 +59,15 @@ pub extern "C" fn scriptron_free_string(ptr: *mut c_char) {
 
 async fn dispatch(request: RpcRequest) -> Result<Value, String> {
     ensure_core().await?;
-    let core = CORE.get().ok_or_else(|| "ScripTron core is not initialized".to_string())?;
+    let core = CORE
+        .get()
+        .ok_or_else(|| "ScripTron core is not initialized".to_string())?;
 
     match request.method.as_str() {
         "get_workspace_path" => Ok(json!(core.workspace_path())),
-        "list_workspace_files" => serde_json::to_value(core.list_workspace_files().await?).map_err(|e| e.to_string()),
+        "list_workspace_files" => {
+            serde_json::to_value(core.list_workspace_files().await?).map_err(|e| e.to_string())
+        }
         "list_dir_files" => {
             let path = required_string(&request.params, "path")?;
             serde_json::to_value(core.list_dir_files(path).await?).map_err(|e| e.to_string())
@@ -74,8 +78,9 @@ async fn dispatch(request: RpcRequest) -> Result<Value, String> {
         }
         "save_tron_file" => {
             let path = required_string(&request.params, "path")?;
-            let cells: Vec<TronCell> = serde_json::from_value(required_value(&request.params, "cells")?)
-                .map_err(|e| e.to_string())?;
+            let cells: Vec<TronCell> =
+                serde_json::from_value(required_value(&request.params, "cells")?)
+                    .map_err(|e| e.to_string())?;
             let blackboard = request.params.get("blackboard").cloned();
             core.save_tron_file(path, cells, blackboard).await?;
             Ok(json!(null))
@@ -95,7 +100,36 @@ async fn dispatch(request: RpcRequest) -> Result<Value, String> {
             core.remove_tool(name).await?;
             Ok(json!(null))
         }
-        "get_auth_status" => serde_json::to_value(core.get_auth_status().await).map_err(|e| e.to_string()),
+        "sync_tronhub" => {
+            core.sync_tronhub().await?;
+            Ok(json!(null))
+        }
+        "list_tronhub" => {
+            let kind = required_string(&request.params, "kind")?;
+            serde_json::to_value(core.list_tronhub(kind).await?).map_err(|e| e.to_string())
+        }
+        "install_tronhub" => {
+            let kind = required_string(&request.params, "kind")?;
+            let name = required_string(&request.params, "name")?;
+            core.install_tronhub(kind, name).await?;
+            Ok(json!(null))
+        }
+        "list_skills" => serde_json::to_value(core.list_skills().await?).map_err(|e| e.to_string()),
+        "remove_skill" => {
+            let name = required_string(&request.params, "name")?;
+            core.remove_skill(name).await?;
+            Ok(json!(null))
+        }
+        "codex_login_status" => {
+            serde_json::to_value(core.codex_login_status().await?).map_err(|e| e.to_string())
+        }
+        "start_codex_login" => {
+            core.start_codex_login().await?;
+            Ok(json!(null))
+        }
+        "get_auth_status" => {
+            serde_json::to_value(core.get_auth_status().await).map_err(|e| e.to_string())
+        }
         "store_api_key" => {
             let provider = required_string(&request.params, "provider")?;
             let api_key = required_string(&request.params, "api_key")?;
@@ -107,38 +141,119 @@ async fn dispatch(request: RpcRequest) -> Result<Value, String> {
             core.disconnect_provider(provider).await?;
             Ok(json!(null))
         }
-        "get_active_config" => serde_json::to_value(core.get_active_config().await).map_err(|e| e.to_string()),
+        "get_active_config" => {
+            serde_json::to_value(core.get_active_config().await).map_err(|e| e.to_string())
+        }
         "set_active_config" => {
             let provider = required_string(&request.params, "provider")?;
             let model = required_string(&request.params, "model")?;
             core.set_active_config(provider, model).await?;
             Ok(json!(null))
         }
+        "get_memory_snapshot" => {
+            let project_path = request
+                .params
+                .get("project_path")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            serde_json::to_value(core.get_memory_snapshot(project_path).await?)
+                .map_err(|e| e.to_string())
+        }
+        "update_global_memory" => {
+            let global_memory =
+                serde_json::from_value(required_value(&request.params, "global_memory")?)
+                    .map_err(|e| e.to_string())?;
+            serde_json::to_value(core.update_global_memory(global_memory).await?)
+                .map_err(|e| e.to_string())
+        }
+        "update_project_memory" => {
+            let project_memory =
+                serde_json::from_value(required_value(&request.params, "project_memory")?)
+                    .map_err(|e| e.to_string())?;
+            serde_json::to_value(core.update_project_memory(project_memory).await?)
+                .map_err(|e| e.to_string())
+        }
+        "factory_reset_app_state" => {
+            core.factory_reset_app_state().await?;
+            Ok(json!(null))
+        }
+        "run_adaptive_skill" => {
+            let skill = required_string(&request.params, "skill")?;
+            let input = request
+                .params
+                .get("input")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            let max_retries = request
+                .params
+                .get("max_retries")
+                .and_then(Value::as_u64)
+                .unwrap_or(3) as u32;
+            let dry_run = request
+                .params
+                .get("dry_run")
+                .and_then(Value::as_bool)
+                .unwrap_or(true);
+            serde_json::to_value(
+                core.run_adaptive_skill(skill, input, max_retries, dry_run)
+                    .await?,
+            )
+            .map_err(|e| e.to_string())
+        }
+        "search_mentions" => {
+            let query = request
+                .params
+                .get("query")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string();
+            let project_path = request
+                .params
+                .get("project_path")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            serde_json::to_value(core.search_mentions(query, project_path).await?)
+                .map_err(|e| e.to_string())
+        }
+        "record_mention_reference" => {
+            let reference = request
+                .params
+                .get("reference")
+                .cloned()
+                .unwrap_or_else(|| json!({}));
+            core.record_mention_reference(reference).await?;
+            Ok(json!(null))
+        }
+        "troner_agent_message" => {
+            let message = required_string(&request.params, "message")?;
+            let project_path = request
+                .params
+                .get("project_path")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            serde_json::to_value(core.troner_agent_message(message, project_path).await?)
+                .map_err(|e| e.to_string())
+        }
         "build_task" => {
-            let cells: Vec<TronCell> = serde_json::from_value(required_value(&request.params, "cells")?)
-                .map_err(|e| e.to_string())?;
+            let cells: Vec<TronCell> =
+                serde_json::from_value(required_value(&request.params, "cells")?)
+                    .map_err(|e| e.to_string())?;
             let project_path = required_string(&request.params, "project_path")?;
-            Ok(core.build_task(cells, project_path).await)
+            let blackboard = request.params.get("blackboard").cloned();
+            Ok(core.build_task(cells, project_path, blackboard).await)
         }
         "run_task_preview" => {
-            let cells: Vec<TronCell> = serde_json::from_value(required_value(&request.params, "cells")?)
-                .map_err(|e| e.to_string())?;
+            let cells: Vec<TronCell> =
+                serde_json::from_value(required_value(&request.params, "cells")?)
+                    .map_err(|e| e.to_string())?;
             let project_path = required_string(&request.params, "project_path")?;
-            let task = core.build_task(cells, project_path).await;
-            enqueue_event(json!({
-                "type": "thinking",
-                "content": "SwiftUI requested a Rust-backed run preview.",
-            }));
-            enqueue_event(json!({
-                "type": "tool_result",
-                "tool": "build_task",
-                "content": task,
-            }));
-            enqueue_event(json!({
-                "type": "complete",
-                "content": "Run preview completed. Real agent streaming will replace this queue next.",
-            }));
-            Ok(json!({ "queued": 3 }))
+            let blackboard = request.params.get("blackboard").cloned();
+            let events = core.run_tron_task(cells, project_path, blackboard).await?;
+            let queued = events.len();
+            for event in events {
+                enqueue_event(serde_json::to_value(event).map_err(|e| e.to_string())?);
+            }
+            Ok(json!({ "queued": queued }))
         }
         "poll_events" => {
             let mut queue = event_queue().lock();

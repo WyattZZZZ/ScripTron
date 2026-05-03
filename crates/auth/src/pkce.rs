@@ -7,7 +7,6 @@
 ///   3. Spin up a one-shot TCP listener on localhost to catch the redirect.
 ///   4. Exchange the code for tokens.
 ///   5. Return `Credentials`.
-
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rand::Rng;
 use reqwest::Client;
@@ -47,8 +46,10 @@ impl PkceFlow {
             .collect();
 
         // Build the authorisation URL
-        let mut auth_url = url::Url::parse(&self.auth_url)
-            .map_err(|e| AuthError::OAuth { code: "bad_url".into(), description: e.to_string() })?;
+        let mut auth_url = url::Url::parse(&self.auth_url).map_err(|e| AuthError::OAuth {
+            code: "bad_url".into(),
+            description: e.to_string(),
+        })?;
         {
             let mut q = auth_url.query_pairs_mut();
             q.append_pair("response_type", "code");
@@ -61,7 +62,11 @@ impl PkceFlow {
         }
 
         // Open browser — on macOS this is `open`, on Linux `xdg-open`
-        let open_cmd = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+        let open_cmd = if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        };
         tokio::process::Command::new(open_cmd)
             .arg(auth_url.as_str())
             .spawn()
@@ -212,7 +217,10 @@ async fn exchange_code(
         });
     }
 
-    let token: TokenResponse = resp.json().await.map_err(|e| AuthError::Network(e.to_string()))?;
+    let token: TokenResponse = resp
+        .json()
+        .await
+        .map_err(|e| AuthError::Network(e.to_string()))?;
 
     let expires_at = token
         .expires_in

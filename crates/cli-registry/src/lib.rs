@@ -50,11 +50,28 @@ pub struct ArgSchema {
     pub arg_type: ArgType,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CliKind {
+    Tool,
+    Model,
+    Software,
+}
+
+impl Default for CliKind {
+    fn default() -> Self {
+        Self::Tool
+    }
+}
+
 /// The manifest describing one CLI tool available in the registry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolManifest {
     /// Unique tool name (e.g. "excel-cli").
     pub name: String,
+    /// Registry item category. Models are also CLI-backed entries.
+    #[serde(default)]
+    pub kind: CliKind,
     pub description: String,
     pub version: String,
     /// The binary / script entry-point to invoke.
@@ -133,7 +150,10 @@ impl CliRegistry {
             tools.push(manifest);
         }
         tools.sort_by(|a, b| a.name.cmp(&b.name));
-        Ok(Self { registry_dir: dir, tools })
+        Ok(Self {
+            registry_dir: dir,
+            tools,
+        })
     }
 
     pub fn list_tools(&self) -> &[ToolManifest] {
@@ -150,8 +170,10 @@ impl CliRegistry {
         }
         let tool_dir = self.registry_dir.join(&manifest.name);
         tokio::fs::create_dir_all(&tool_dir).await?;
-        let json = serde_json::to_string_pretty(&manifest)
-            .map_err(|e| RegistryError::Json { path: tool_dir.clone(), source: e })?;
+        let json = serde_json::to_string_pretty(&manifest).map_err(|e| RegistryError::Json {
+            path: tool_dir.clone(),
+            source: e,
+        })?;
         tokio::fs::write(tool_dir.join("manifest.json"), json).await?;
         self.tools.push(manifest);
         self.tools.sort_by(|a, b| a.name.cmp(&b.name));

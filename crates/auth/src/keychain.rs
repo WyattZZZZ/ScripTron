@@ -1,5 +1,4 @@
 /// Credential storage: macOS Keychain on macOS, encrypted JSON file elsewhere.
-
 use crate::{AuthError, Credentials, Provider};
 use std::path::Path;
 
@@ -32,8 +31,7 @@ pub fn load(provider: &Provider, _dir: &Path) -> Result<Option<Credentials>, Aut
 #[cfg(target_os = "macos")]
 pub fn delete(provider: &Provider, _dir: &Path) -> Result<(), AuthError> {
     use security_framework::passwords::delete_generic_password;
-    delete_generic_password(SERVICE, provider.id())
-        .map_err(|e| AuthError::Keychain(e.to_string()))
+    delete_generic_password(SERVICE, provider.id()).map_err(|e| AuthError::Keychain(e.to_string()))
 }
 
 // ── File-based fallback (Linux / Windows / dev) ───────────────────────────────

@@ -9,21 +9,25 @@ BUNDLE_DIR="$DIST_DIR/$BUNDLE_NAME"
 CONTENTS_DIR="$BUNDLE_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 FRAMEWORKS_DIR="$CONTENTS_DIR/Frameworks"
+RESOURCES_DIR="$CONTENTS_DIR/Resources"
 
 export PATH="/opt/homebrew/opt/rustup/bin:$PATH"
 
 cd "$ROOT_DIR"
 cargo build -p scriptron-ffi
+cargo build -p scriptron-cli
 
 cd "$APP_DIR"
 swift build
 
 rm -rf "$BUNDLE_DIR"
-mkdir -p "$MACOS_DIR" "$FRAMEWORKS_DIR"
+mkdir -p "$MACOS_DIR" "$FRAMEWORKS_DIR" "$RESOURCES_DIR/bin"
 
 cp "$APP_DIR/.build/debug/ScripTronNative" "$MACOS_DIR/ScripTron"
+cp "$ROOT_DIR/target/debug/scriptron" "$RESOURCES_DIR/bin/scriptron"
 cp "$ROOT_DIR/target/debug/libscriptron_ffi.dylib" "$FRAMEWORKS_DIR/libscriptron_ffi.dylib"
 chmod +x "$MACOS_DIR/ScripTron"
+chmod +x "$RESOURCES_DIR/bin/scriptron"
 
 cat > "$CONTENTS_DIR/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>

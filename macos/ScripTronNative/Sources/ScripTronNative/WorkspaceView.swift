@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct WorkspaceView: View {
     @EnvironmentObject private var model: AppModel
@@ -38,8 +39,14 @@ struct WorkspaceView: View {
             CLIMarketView()
         case .cliManagement:
             CLIManagementView()
+        case .skillMarket:
+            SkillMarketView()
+        case .skillManagement:
+            SkillManagementView()
         case .modelManagement:
             ModelManagementView()
+        case .settings:
+            WorkspaceSettingsView()
         }
     }
 }
@@ -69,10 +76,10 @@ private struct WorkspaceSidebar: View {
             Button {
                 showingNewProject = true
             } label: {
-                Label("New Project", systemImage: "plus")
-                    .frame(maxWidth: .infinity)
+                Label(model.tr("New Project", "新建项目"), systemImage: "plus")
             }
-            .buttonStyle(PrimaryButtonStyle())
+            .buttonStyle(WorkspacePrimaryActionStyle())
+            .frame(maxWidth: .infinity)
 
             VStack(alignment: .leading, spacing: 8) {
                 WorkspaceNavButton(panel: .allProjects, icon: "folder")
@@ -80,7 +87,11 @@ private struct WorkspaceSidebar: View {
                 Divider().padding(.vertical, 6)
                 WorkspaceNavButton(panel: .cliMarket, icon: "shippingbox")
                 WorkspaceNavButton(panel: .cliManagement, icon: "terminal")
+                WorkspaceNavButton(panel: .skillMarket, icon: "sparkles")
+                WorkspaceNavButton(panel: .skillManagement, icon: "wrench.and.screwdriver")
                 WorkspaceNavButton(panel: .modelManagement, icon: "cpu")
+                Divider().padding(.vertical, 6)
+                WorkspaceNavButton(panel: .settings, icon: "gearshape")
             }
 
             Spacer()
@@ -105,7 +116,7 @@ private struct WorkspaceNavButton: View {
     let icon: String
 
     var body: some View {
-        SidebarButton(title: panel.rawValue, icon: icon, active: model.workspacePanel == panel) {
+        SidebarButton(title: model.workspacePanelTitle(panel), icon: icon, active: model.workspacePanel == panel) {
             model.selectWorkspacePanel(panel)
         }
     }
@@ -116,14 +127,13 @@ private struct WorkspaceTopBar: View {
 
     var body: some View {
         HStack(spacing: 16) {
-            Label("Local Workspace", systemImage: "internaldrive")
+            Label(model.tr("Local Workspace", "本地工作区"), systemImage: "internaldrive")
                 .font(.system(size: 14, weight: .bold))
                 .foregroundStyle(.secondary)
             Spacer()
-            Button { model.refreshFiles() } label: {
-                Label("Refresh", systemImage: "arrow.clockwise")
+            HoverToolbarButton(title: model.tr("Refresh", "刷新"), icon: "arrow.clockwise") {
+                model.refreshFiles()
             }
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, 40)
         .frame(height: 72)
@@ -131,9 +141,64 @@ private struct WorkspaceTopBar: View {
     }
 }
 
+private struct WorkspacePrimaryActionStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        WorkspacePrimaryActionLabel(configuration: configuration)
+    }
+}
+
+private struct WorkspacePrimaryActionLabel: View {
+    let configuration: ButtonStyle.Configuration
+    @State private var hovering = false
+
+    var body: some View {
+        configuration.label
+            .font(.system(size: 15, weight: .bold))
+            .foregroundStyle(.white)
+            .frame(maxWidth: .infinity, minHeight: 48)
+            .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .background(
+                Color.primaryGreen.opacity(configuration.isPressed ? 0.78 : (hovering ? 0.92 : 1)),
+                in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(.white.opacity(hovering ? 0.36 : 0), lineWidth: 1)
+            )
+            .onHover { hovering = $0 }
+            .animation(.easeOut(duration: 0.12), value: hovering)
+    }
+}
+
+private struct HoverToolbarButton: View {
+    let title: String
+    let icon: String
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Label(title, systemImage: icon)
+                .font(.system(size: 13, weight: .bold))
+                .foregroundStyle(hovering ? Color.primaryGreen : Color.appSecondaryText)
+                .padding(.horizontal, 12)
+                .frame(height: 34)
+                .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                .background(
+                    hovering ? Color.primaryGreen.opacity(0.08) : Color.clear,
+                    in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+                )
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+    }
+}
+
 private struct ProjectsListView: View {
     @EnvironmentObject private var model: AppModel
     let archived: Bool
+    @State private var zipDropTargeted = false
 
     private var visibleProjects: [AppModel.ProjectItem] {
         model.projects.filter { $0.archived == archived }
@@ -142,9 +207,9 @@ private struct ProjectsListView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             VStack(alignment: .leading, spacing: 8) {
-                Text(archived ? "Archived Projects" : "Projects")
+                Text(archived ? model.tr("Archived Projects", "归档项目") : model.tr("Projects", "项目"))
                     .font(.system(size: 38, weight: .bold))
-                Text(archived ? "Restore or delete archived local projects." : "Manage, package, open, archive, or delete local automation projects.")
+                Text(archived ? model.tr("Restore or delete archived local projects.", "恢复或删除已归档的本地项目。") : model.tr("Manage, package, open, archive, or delete local automation projects.", "管理、打包、打开、归档或删除本地自动化项目。"))
                     .font(.system(size: 17))
                     .foregroundStyle(.secondary)
             }
@@ -156,11 +221,19 @@ private struct ProjectsListView: View {
                     Divider()
                 }
                 if visibleProjects.isEmpty {
-                    EmptyListView(title: archived ? "No archived projects" : "No projects", subtitle: "Create a project from the sidebar.")
+                    EmptyListView(title: archived ? model.tr("No archived projects", "暂无归档项目") : model.tr("No projects", "暂无项目"), subtitle: model.tr("Create a project from the sidebar.", "从侧边栏创建一个项目。"))
                 }
             }
             .background(.white, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.hairline.opacity(0.7), lineWidth: 1))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(zipDropTargeted ? Color.primaryGreen : Color.hairline.opacity(0.7), style: StrokeStyle(lineWidth: zipDropTargeted ? 2 : 1, dash: zipDropTargeted ? [7, 5] : []))
+            )
+            .shadow(color: zipDropTargeted ? Color.primaryGreen.opacity(0.14) : Color.clear, radius: 18, y: 10)
+            .onDrop(of: [UTType.fileURL.identifier], isTargeted: $zipDropTargeted) { providers in
+                guard !archived else { return false }
+                return model.importProjectZipDrops(providers)
+            }
         }
         .padding(42)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -168,18 +241,19 @@ private struct ProjectsListView: View {
 }
 
 private struct ProjectTableHeader: View {
+    @EnvironmentObject private var model: AppModel
     let archived: Bool
 
     var body: some View {
-        HStack {
-            Text("Name").frame(maxWidth: .infinity, alignment: .leading)
-            Text("Status").frame(width: 100, alignment: .leading)
-            Text("Actions").frame(width: archived ? 180 : 260, alignment: .leading)
+        HStack(spacing: 16) {
+            Text(model.tr("Name", "名称")).frame(maxWidth: .infinity, alignment: .leading)
+            Text(model.tr("Status", "状态")).frame(width: 82, alignment: .leading)
+            Text(model.tr("Actions", "操作")).frame(width: archived ? 218 : 342, alignment: .leading)
         }
         .font(.system(size: 11, weight: .bold))
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 16)
-        .frame(height: 34)
+        .padding(.horizontal, 18)
+        .frame(height: 38)
         .background(Color.surfaceSoft)
     }
 }
@@ -188,9 +262,10 @@ private struct ProjectRow: View {
     @EnvironmentObject private var model: AppModel
     let project: AppModel.ProjectItem
     let archived: Bool
+    @State private var hovering = false
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(spacing: 16) {
             Image(systemName: project.packaged ? "shippingbox.fill" : "folder")
                 .foregroundStyle(Color.primaryGreen)
                 .frame(width: 28)
@@ -202,86 +277,756 @@ private struct ProjectRow: View {
 
             Text(project.status.uppercased())
                 .font(.system(size: 10, weight: .bold))
-                .frame(width: 100, alignment: .leading)
+                .frame(width: 82, alignment: .leading)
                 .foregroundStyle(Color.primaryGreen)
 
-            HStack(spacing: 12) {
-                Button("Open") { model.openProject(project) }.disabled(archived)
-                Button("Package") { model.packageProject(project) }.disabled(archived)
+            HStack(spacing: 8) {
+                WorkspaceActionButton(model.tr("Open", "打开"), icon: "arrow.up.right.square", disabled: archived) { model.openProject(project) }
+                WorkspaceActionButton(model.tr("Package", "打包"), icon: "shippingbox", disabled: archived) { model.packageProject(project) }
                 if archived {
-                    Button("Restore") { model.restoreProject(project) }
+                    WorkspaceActionButton(model.tr("Restore", "恢复"), icon: "arrow.uturn.backward") { model.restoreProject(project) }
                 } else {
-                    Button("Archive") { model.archiveProject(project) }
+                    WorkspaceActionButton(model.tr("Archive", "归档"), icon: "archivebox") { model.archiveProject(project) }
                 }
-                Button("Delete") { model.deleteProject(project) }.foregroundStyle(.red)
+                WorkspaceActionButton(model.tr("Delete", "删除"), icon: "trash", role: .destructive) { model.deleteProject(project) }
             }
-            .buttonStyle(.plain)
-            .font(.system(size: 12, weight: .medium))
-            .frame(width: archived ? 180 : 260, alignment: .leading)
+            .frame(width: archived ? 218 : 342, alignment: .leading)
         }
-        .padding(.horizontal, 16)
-        .frame(height: 58)
+        .padding(.horizontal, 18)
+        .frame(height: 64)
+        .contentShape(Rectangle())
+        .background(hovering ? Color.primaryGreen.opacity(0.045) : Color.clear)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+    }
+}
+
+private struct WorkspaceActionButton: View {
+    let title: String
+    let icon: String
+    let role: ButtonRole?
+    let disabled: Bool
+    let action: () -> Void
+    @State private var hovering = false
+
+    init(_ title: String, icon: String, role: ButtonRole? = nil, disabled: Bool = false, action: @escaping () -> Void) {
+        self.title = title
+        self.icon = icon
+        self.role = role
+        self.disabled = disabled
+        self.action = action
+    }
+
+    var body: some View {
+        Button(role: role, action: action) {
+            Label(title, systemImage: icon)
+                .font(.system(size: 11, weight: .bold))
+                .labelStyle(.titleAndIcon)
+                .foregroundStyle(foreground)
+                .lineLimit(1)
+                .minimumScaleFactor(0.9)
+                .padding(.horizontal, 9)
+                .frame(minWidth: minWidth, minHeight: 30)
+                .contentShape(Capsule())
+                .background(background, in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+        .onHover { hovering = $0 && !disabled }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+    }
+
+    private var foreground: Color {
+        if disabled { return Color.appSecondaryText.opacity(0.45) }
+        if role == .destructive { return hovering ? .white : .red }
+        return hovering ? Color.primaryGreen : Color.appSecondaryText
+    }
+
+    private var background: Color {
+        if disabled { return Color.clear }
+        if role == .destructive { return hovering ? .red.opacity(0.82) : .red.opacity(0.08) }
+        return hovering ? Color.primaryGreen.opacity(0.10) : Color.clear
+    }
+
+    private var minWidth: CGFloat {
+        switch title {
+        case "Package", "Archive", "Restore", "打包", "归档", "恢复": 82
+        case "Delete", "删除": 70
+        default: 62
+        }
     }
 }
 
 private struct CLIMarketView: View {
+    @EnvironmentObject private var model: AppModel
+
+    private var items: [TronhubEntry] { model.tronhubClis }
+
     var body: some View {
-        ManagementPanel(title: "CLI Market", subtitle: "Browse installable CLI capabilities.", rows: ["Excel CLI", "PDF CLI", "Archive CLI", "HR Report CLI"])
+        ManagementPage(title: model.tr("CLI Market", "CLI 市场"), subtitle: model.tr("Install tool and software CLIs from TronHub. Model providers are managed separately in Model Management.", "从 TronHub 安装工具和软件 CLI。模型 Provider 在模型管理中单独管理。")) {
+            HStack {
+                ManagementPill(model.tr("Remote", "远程仓库"), value: "ScripTron_Extension")
+                ManagementPill(model.tr("Available", "可用"), value: "\(items.count)")
+                Spacer()
+                Button { model.syncTronhub() } label: { Label(model.tr("Sync TronHub", "同步 TronHub"), systemImage: "arrow.triangle.2.circlepath") }
+                    .buttonStyle(ManagementButtonStyle(primary: true))
+            }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 16)], spacing: 16) {
+                ForEach(items) { item in
+                    TronhubCard(entry: item) {
+                        model.installTronhub(item)
+                    }
+                }
+            }
+        }
+        .onAppear { model.loadWorkspaceManagementData() }
     }
 }
 
 private struct CLIManagementView: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var showingInstaller = false
+
     var body: some View {
-        ManagementPanel(title: "CLI Management", subtitle: "Inspect installed local command-line tools and their manifests.", rows: ["Installed tools", "Manifest validation", "Tool health checks"])
+        ManagementPage(title: model.tr("CLI Management", "CLI 管理"), subtitle: model.tr("Everything here is loaded from the workspace .register folder.", "这里的所有内容都从工作区 .register 文件夹加载。")) {
+            HStack {
+                ManagementPill(model.tr("Registry", "注册表"), value: model.tr("\(model.cliRegistry.count) installed", "已安装 \(model.cliRegistry.count) 个"))
+                ManagementPill("Path", value: "\(model.workspacePath)/.register")
+                Spacer()
+                Button { model.refreshRegistry() } label: { Label(model.tr("Refresh", "刷新"), systemImage: "arrow.clockwise") }
+                    .buttonStyle(ManagementButtonStyle())
+                Button { showingInstaller.toggle() } label: { Label(model.tr("Install JSON", "安装 JSON"), systemImage: "plus") }
+                    .buttonStyle(ManagementButtonStyle(primary: true))
+            }
+
+            if showingInstaller {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(model.tr("Manifest JSON", "Manifest JSON")).font(.system(size: 13, weight: .bold)).foregroundStyle(Color.appSecondaryText)
+                    TextEditor(text: $model.installManifestDraft)
+                        .font(.system(size: 12, design: .monospaced))
+                        .scrollContentBackground(.hidden)
+                        .padding(10)
+                        .frame(height: 220)
+                        .background(.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.hairline.opacity(0.7), lineWidth: 1))
+                    HStack {
+                        Spacer()
+                        Button(model.tr("Cancel", "取消")) { showingInstaller = false }
+                            .buttonStyle(ManagementButtonStyle())
+                        Button(model.tr("Install", "安装")) {
+                            model.installCLIManifest(model.installManifestDraft)
+                            showingInstaller = false
+                        }
+                        .buttonStyle(ManagementButtonStyle(primary: true))
+                    }
+                }
+                .padding(16)
+                .background(Color.surfaceSoft.opacity(0.72), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+            }
+
+            RegistryListView(items: model.cliRegistry, activeModel: model.activeConfig?.model, onRemove: model.removeCLI, onActivateModel: model.activateModelCLI)
+        }
+        .onAppear { model.loadWorkspaceManagementData() }
+    }
+}
+
+private struct SkillMarketView: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        ManagementPage(title: model.tr("Skill Market", "Skill 市场"), subtitle: model.tr("Install agent skills from TronHub into the workspace .skills folder.", "从 TronHub 安装 agent skills 到工作区 .skills 文件夹。")) {
+            HStack {
+                ManagementPill(model.tr("Remote", "远程仓库"), value: "ScripTron_Extension")
+                ManagementPill(model.tr("Available", "可用"), value: "\(model.tronhubSkills.count)")
+                Spacer()
+                Button { model.syncTronhub() } label: { Label(model.tr("Sync TronHub", "同步 TronHub"), systemImage: "arrow.triangle.2.circlepath") }
+                    .buttonStyle(ManagementButtonStyle(primary: true))
+            }
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 16)], spacing: 16) {
+                ForEach(model.tronhubSkills) { item in
+                    TronhubCard(entry: item) {
+                        model.installTronhub(item)
+                    }
+                }
+            }
+        }
+        .onAppear { model.loadWorkspaceManagementData() }
+    }
+}
+
+private struct SkillManagementView: View {
+    @EnvironmentObject private var model: AppModel
+
+    var body: some View {
+        ManagementPage(title: model.tr("Skill Management", "Skill 管理"), subtitle: model.tr("Installed skills live under the workspace .skills folder and can be used by Troner Agent.", "已安装的 skills 位于工作区 .skills 文件夹，可被 Troner Agent 使用。")) {
+            HStack {
+                ManagementPill(model.tr("Installed", "已安装"), value: "\(model.installedSkills.count)")
+                ManagementPill("Path", value: "\(model.workspacePath)/.skills")
+                Spacer()
+                Button { model.refreshSkills() } label: { Label(model.tr("Refresh", "刷新"), systemImage: "arrow.clockwise") }
+                    .buttonStyle(ManagementButtonStyle())
+            }
+            if model.installedSkills.isEmpty {
+                EmptyListView(title: model.tr("No skills installed", "暂无已安装 Skill"), subtitle: model.tr("Install a skill from Skill Market.", "从 Skill 市场安装一个 skill。"))
+                    .frame(maxWidth: .infinity, minHeight: 260)
+            } else {
+                VStack(spacing: 10) {
+                    ForEach(model.installedSkills) { skill in
+                        SkillRow(skill: skill) { model.removeSkill(skill) }
+                    }
+                }
+            }
+        }
+        .onAppear { model.loadWorkspaceManagementData() }
     }
 }
 
 private struct ModelManagementView: View {
+    @EnvironmentObject private var model: AppModel
+
+    private var modelCLIs: [CLIManifest] {
+        model.cliRegistry.filter { $0.kind == "model" }
+    }
+
     var body: some View {
-        ManagementPanel(title: "Model Management", subtitle: "Configure local model/provider selection for this device.", rows: ["Active provider", "Model selection", "API key storage"])
+        ManagementPage(title: model.tr("Model Management", "模型管理"), subtitle: model.tr("Models are registry-backed CLIs. Install a model CLI in the market, then set it as the active model here.", "模型是注册表驱动的 CLI。在市场安装模型 CLI，然后在这里设为当前模型。")) {
+            HStack {
+                ManagementPill(model.tr("Provider", "Provider"), value: model.activeConfig?.provider ?? model.tr("Not loaded", "未加载"))
+                ManagementPill(model.tr("Active Model", "当前模型"), value: model.activeConfig?.model ?? model.tr("Not selected", "未选择"))
+                ManagementPill(model.tr("Available", "可用"), value: "\(model.tronhubModels.count)")
+                Spacer()
+                Button { model.syncTronhub() } label: { Label(model.tr("Sync TronHub", "同步 TronHub"), systemImage: "arrow.triangle.2.circlepath") }
+                    .buttonStyle(ManagementButtonStyle(primary: true))
+                Button { model.loadWorkspaceManagementData() } label: { Label(model.tr("Refresh", "刷新"), systemImage: "arrow.clockwise") }
+                    .buttonStyle(ManagementButtonStyle())
+            }
+
+            if !model.tronhubModels.isEmpty {
+                Text(model.tr("Model Provider Market", "模型 Provider 市场"))
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(Color.appSecondaryText)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 16)], spacing: 16) {
+                    ForEach(model.tronhubModels) { item in
+                        TronhubCard(entry: item) {
+                            model.installTronhub(item)
+                        }
+                    }
+                }
+            }
+
+            if modelCLIs.isEmpty {
+                EmptyListView(title: model.tr("No model CLIs registered", "暂无已注册模型 CLI"), subtitle: model.tr("Install a model provider from the Model Provider Market above.", "从上方模型 Provider 市场安装一个模型。"))
+                    .frame(maxWidth: .infinity, minHeight: 260)
+            } else {
+                Text(model.tr("Installed Model Providers", "已安装模型 Provider"))
+                    .font(.system(size: 14, weight: .bold))
+                    .foregroundStyle(Color.appSecondaryText)
+                RegistryListView(items: modelCLIs, activeModel: model.activeConfig?.model, onRemove: model.removeCLI, onActivateModel: model.activateModelCLI)
+            }
+        }
+        .onAppear { model.loadWorkspaceManagementData() }
     }
 }
 
-private struct ManagementPanel: View {
-    let title: String
-    let subtitle: String
-    let rows: [String]
+private struct WorkspaceSettingsView: View {
+    @EnvironmentObject private var model: AppModel
+    @State private var language = "en"
+    @State private var globalUserName = ""
+    @State private var globalStyle = ""
+    @State private var globalRules = ""
+    @State private var confirmFactoryReset = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 22) {
-            Text(title).font(.system(size: 38, weight: .bold))
-            Text(subtitle).font(.system(size: 17)).foregroundStyle(.secondary)
-            VStack(spacing: 0) {
-                ForEach(rows, id: \.self) { row in
-                    HStack {
-                        Text(row).font(.system(size: 14, weight: .semibold))
-                        Spacer()
-                        Text("LOCAL").font(.system(size: 10, weight: .bold)).foregroundStyle(Color.primaryGreen)
+        ManagementPage(title: model.tr("Settings", "设置"), subtitle: model.tr("Configure app-wide behavior and Troner global memory.", "配置整个应用的行为和 Troner 全局记忆。")) {
+            WorkspaceSettingsSection(title: model.tr("Application", "应用"), subtitle: model.tr("Preferences that apply to the whole app.", "应用于整个软件的偏好设置。")) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(model.tr("Language", "语言"))
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(Color.appSecondaryText)
+                    Picker("", selection: $language) {
+                        Text("中文").tag("zh")
+                        Text("English").tag("en")
                     }
-                    .padding(.horizontal, 16)
-                    .frame(height: 48)
-                    Divider()
+                    .pickerStyle(.segmented)
+                    .frame(width: 260)
+                    .onChange(of: language) { model.setAppLanguage($0) }
                 }
             }
-            .background(.white, in: RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.hairline.opacity(0.7), lineWidth: 1))
-            Spacer()
+
+            WorkspaceSettingsSection(title: model.tr("Global Memory", "全局记忆"), subtitle: model.tr("This memory is included in Troner prompts across all projects.", "这部分记忆会注入所有项目中的 Troner prompt。")) {
+                WorkspaceLabeledTextField(model.tr("User name preference", "用户名称偏好"), text: $globalUserName)
+                WorkspaceLabeledTextEditor(model.tr("Agent style preference", "Agent 风格偏好"), text: $globalStyle, height: 78)
+                WorkspaceLabeledTextEditor(model.tr("Execution rules, one per line", "执行规则，每行一条"), text: $globalRules, height: 106)
+                HStack {
+                    Button(model.tr("Save Global Memory", "保存全局记忆")) { saveGlobalMemory() }
+                        .buttonStyle(ManagementButtonStyle(primary: true))
+                    Button { syncDrafts() } label: { Label(model.tr("Reload", "重新载入"), systemImage: "arrow.clockwise") }
+                        .buttonStyle(ManagementButtonStyle())
+                }
+            }
+
+            WorkspaceSettingsSection(title: model.tr("Factory Reset", "恢复出厂设置"), subtitle: model.tr("Resets app configuration, global memory, installed CLIs, skills, and TronHub cache. Project folders are preserved.", "重置应用配置、全局记忆、已安装 CLI、skills 和 TronHub 缓存。项目文件夹会保留。")) {
+                Button(role: .destructive) {
+                    confirmFactoryReset = true
+                } label: {
+                    Label(model.tr("Restore Factory Settings", "恢复出厂设置"), systemImage: "exclamationmark.triangle")
+                }
+                .buttonStyle(ManagementButtonStyle())
+                .foregroundStyle(.red)
+            }
         }
-        .padding(42)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear {
+            language = model.appLanguage
+            model.loadMemorySnapshot()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                syncDrafts()
+            }
+        }
+        .alert(model.tr("Restore factory settings?", "确认恢复出厂设置？"), isPresented: $confirmFactoryReset) {
+            Button(model.tr("Cancel", "取消"), role: .cancel) {}
+            Button(model.tr("Restore", "恢复"), role: .destructive) {
+                model.factoryResetAppState()
+                language = "en"
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) {
+                    syncDrafts()
+                }
+            }
+        } message: {
+            Text(model.tr("This resets app configuration, global memory, installed CLIs, skills, and TronHub cache. Your project folders will not be deleted.", "这会重置应用配置、全局记忆、已安装 CLI、skills 和 TronHub 缓存。你的项目文件夹不会被删除。"))
+        }
     }
+
+    private func syncDrafts() {
+        guard let memory = model.memorySnapshot?.global_memory else { return }
+        globalUserName = memory.user_name_preference
+        globalStyle = memory.agent_style_preference
+        globalRules = memory.execution_rules.joined(separator: "\n")
+    }
+
+    private func saveGlobalMemory() {
+        guard var memory = model.memorySnapshot?.global_memory else { return }
+        memory.user_name_preference = globalUserName
+        memory.agent_style_preference = globalStyle
+        memory.execution_rules = globalRules
+            .split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        model.saveGlobalMemory(memory)
+    }
+}
+
+private struct WorkspaceSettingsSection<Content: View>: View {
+    let title: String
+    let subtitle: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: 16, weight: .bold))
+                    .foregroundStyle(Color.appText)
+                Text(subtitle)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.appSecondaryText)
+            }
+            content
+        }
+        .padding(16)
+        .background(.white, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.hairline.opacity(0.65), lineWidth: 1))
+    }
+}
+
+private struct WorkspaceLabeledTextField: View {
+    let title: String
+    @Binding var text: String
+
+    init(_ title: String, text: Binding<String>) {
+        self.title = title
+        self._text = text
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Color.appSecondaryText)
+            TextField(title, text: $text)
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: 520)
+        }
+    }
+}
+
+private struct WorkspaceLabeledTextEditor: View {
+    let title: String
+    @Binding var text: String
+    let height: CGFloat
+
+    init(_ title: String, text: Binding<String>, height: CGFloat) {
+        self.title = title
+        self._text = text
+        self.height = height
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.system(size: 11, weight: .bold))
+                .foregroundStyle(Color.appSecondaryText)
+            TextEditor(text: $text)
+                .font(.system(size: 12))
+                .scrollContentBackground(.hidden)
+                .padding(8)
+                .frame(maxWidth: 620)
+                .frame(height: height)
+                .background(Color.surfaceSoft, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+    }
+}
+
+private struct ManagementPage<Content: View>: View {
+    let title: String
+    let subtitle: String
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 22) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text(title)
+                        .font(.system(size: 36, weight: .bold))
+                        .foregroundStyle(Color.appText)
+                    Text(subtitle)
+                        .font(.system(size: 16))
+                        .foregroundStyle(Color.appSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                content
+            }
+            .padding(42)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct RegistryListView: View {
+    let items: [CLIManifest]
+    let activeModel: String?
+    let onRemove: (CLIManifest) -> Void
+    let onActivateModel: (CLIManifest) -> Void
+
+    var body: some View {
+        VStack(spacing: 10) {
+            ForEach(items) { item in
+                RegistryRow(item: item, active: activeModel == item.name, onRemove: { onRemove(item) }, onActivateModel: { onActivateModel(item) })
+            }
+        }
+    }
+}
+
+private struct RegistryRow: View {
+    @EnvironmentObject private var model: AppModel
+    let item: CLIManifest
+    let active: Bool
+    let onRemove: () -> Void
+    let onActivateModel: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 14) {
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Color.primaryGreen)
+                    .frame(width: 42, height: 42)
+                    .background(Color.primaryGreen.opacity(0.12), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Text(item.name).font(.system(size: 18, weight: .bold)).foregroundStyle(Color.appText)
+                        KindBadge(kind: item.kind)
+                        if active { KindBadge(kind: "active") }
+                    }
+                    Text(item.description)
+                        .font(.system(size: 13))
+                        .foregroundStyle(Color.appSecondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text(item.command)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(Color.appSecondaryText.opacity(0.82))
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                if item.kind == "model" {
+                    Button(active ? model.tr("Active", "当前") : model.tr("Use Model", "使用模型")) { onActivateModel() }
+                        .buttonStyle(ManagementButtonStyle(primary: !active))
+                        .disabled(active)
+                }
+                Button(role: .destructive) { onRemove() } label: { Image(systemName: "trash") }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(hovering ? .red : Color.appSecondaryText)
+            }
+
+            if !item.args_schema.isEmpty {
+                HStack(spacing: 8) {
+                    ForEach(item.args_schema) { arg in
+                        Text("\(arg.name):\(arg.type)")
+                            .font(.system(size: 10, weight: .bold, design: .monospaced))
+                            .foregroundStyle(Color.appSecondaryText)
+                            .padding(.horizontal, 8)
+                            .frame(height: 22)
+                            .background(Color.surfaceSoft, in: Capsule())
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(hovering ? Color.primaryGreen.opacity(0.07) : .white.opacity(0.82), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(active ? Color.primaryGreen.opacity(0.35) : Color.hairline.opacity(0.7), lineWidth: 1))
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+    }
+
+    private var icon: String {
+        switch item.kind {
+        case "model": return "cpu"
+        case "software": return "app.connected.to.app.below.fill"
+        default: return "terminal"
+        }
+    }
+}
+
+private struct TronhubCard: View {
+    @EnvironmentObject private var model: AppModel
+    let entry: TronhubEntry
+    let install: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Image(systemName: icon)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Color.primaryGreen)
+                    .frame(width: 44, height: 44)
+                    .background(Color.primaryGreen.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                Spacer()
+                KindBadge(kind: entry.kind)
+            }
+            Text(entry.name).font(.system(size: 18, weight: .bold)).foregroundStyle(Color.appText)
+            Text(entry.description)
+                .font(.system(size: 13))
+                .foregroundStyle(Color.appSecondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(entry.source_path)
+                .font(.system(size: 10, design: .monospaced))
+                .foregroundStyle(Color.appSecondaryText.opacity(0.72))
+                .lineLimit(1)
+            Spacer(minLength: 6)
+            Button(entry.installed ? model.tr("Installed", "已安装") : model.tr("Install", "安装")) { install() }
+                .buttonStyle(ManagementButtonStyle(primary: !entry.installed))
+                .disabled(entry.installed)
+        }
+        .padding(18)
+        .frame(minHeight: 220, alignment: .topLeading)
+        .background(hovering ? Color.primaryGreen.opacity(0.07) : .white.opacity(0.82), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.hairline.opacity(0.7), lineWidth: 1))
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+    }
+
+    private var icon: String {
+        switch entry.kind {
+        case "skill": return "sparkles"
+        case "model": return "cpu"
+        default: return "terminal"
+        }
+    }
+}
+
+private struct SkillRow: View {
+    let skill: SkillEntry
+    let remove: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(Color.primaryGreen)
+                .frame(width: 42, height: 42)
+                .background(Color.primaryGreen.opacity(0.12), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+            VStack(alignment: .leading, spacing: 5) {
+                Text(skill.name).font(.system(size: 17, weight: .bold)).foregroundStyle(Color.appText)
+                Text(skill.description).font(.system(size: 13)).foregroundStyle(Color.appSecondaryText)
+                Text(skill.path).font(.system(size: 11, design: .monospaced)).foregroundStyle(Color.appSecondaryText.opacity(0.75)).lineLimit(1)
+            }
+            Spacer()
+            Button(role: .destructive) { remove() } label: { Image(systemName: "trash") }
+                .buttonStyle(.plain)
+                .foregroundStyle(hovering ? .red : Color.appSecondaryText)
+        }
+        .padding(16)
+        .background(hovering ? Color.primaryGreen.opacity(0.07) : .white.opacity(0.82), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.hairline.opacity(0.7), lineWidth: 1))
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+    }
+}
+
+private struct MarketplaceCard: View {
+    @EnvironmentObject private var model: AppModel
+    let item: MarketplaceCLIItem
+    let installed: Bool
+    let install: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Image(systemName: item.icon)
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Color.primaryGreen)
+                    .frame(width: 44, height: 44)
+                    .background(Color.primaryGreen.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                Spacer()
+                KindBadge(kind: item.kind)
+            }
+            Text(item.name).font(.system(size: 18, weight: .bold)).foregroundStyle(Color.appText)
+            Text(item.description)
+                .font(.system(size: 13))
+                .foregroundStyle(Color.appSecondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 6)
+            Button(installed ? model.tr("Installed", "已安装") : model.tr("Install", "安装")) { install() }
+                .buttonStyle(ManagementButtonStyle(primary: !installed))
+                .disabled(installed)
+        }
+        .padding(18)
+        .frame(minHeight: 210, alignment: .topLeading)
+        .background(hovering ? Color.primaryGreen.opacity(0.07) : .white.opacity(0.82), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18).stroke(Color.hairline.opacity(0.7), lineWidth: 1))
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+    }
+}
+
+private struct ManagementPill: View {
+    let title: String
+    let value: String
+
+    init(_ title: String, value: String) {
+        self.title = title
+        self.value = value
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(title.uppercased()).font(.system(size: 10, weight: .bold)).foregroundStyle(Color.appSecondaryText)
+            Text(value).font(.system(size: 13, weight: .semibold)).foregroundStyle(Color.appText).lineLimit(1)
+        }
+        .padding(.horizontal, 14)
+        .frame(height: 54)
+        .background(.white.opacity(0.82), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.hairline.opacity(0.7), lineWidth: 1))
+    }
+}
+
+private struct KindBadge: View {
+    let kind: String
+
+    var body: some View {
+        Text(kind.uppercased())
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(kind == "active" ? .white : Color.primaryGreen)
+            .padding(.horizontal, 8)
+            .frame(height: 22)
+            .background(kind == "active" ? Color.primaryGreen : Color.primaryGreen.opacity(0.10), in: Capsule())
+    }
+}
+
+private struct ManagementButtonStyle: ButtonStyle {
+    var primary = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 12, weight: .bold))
+            .foregroundStyle(primary ? .white : Color.primaryGreen)
+            .padding(.horizontal, 12)
+            .frame(height: 34)
+            .background(primary ? Color.primaryGreen.opacity(configuration.isPressed ? 0.82 : 1) : Color.primaryGreen.opacity(configuration.isPressed ? 0.16 : 0.10), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+}
+
+private struct MarketplaceCLIItem: Identifiable {
+    let id: String
+    let name: String
+    let kind: String
+    let icon: String
+    let description: String
+    let manifestJSON: String
+
+    static let defaults: [MarketplaceCLIItem] = [
+        MarketplaceCLIItem(
+            id: "codex-cli",
+            name: "codex-cli",
+            kind: "model",
+            icon: "cpu",
+            description: "OpenAI Codex CLI adapter. Usable as a model entry and as a delegated project agent.",
+            manifestJSON: #"""
+{"name":"codex-cli","kind":"model","description":"Run Codex non-interactively against the current ScripTron project.","version":"0.128.0-alpha.1","command":"/Applications/Codex.app/Contents/Resources/codex","author":"OpenAI","homepage":"https://openai.com/codex","args_schema":[{"name":"prompt","description":"Task prompt for Codex.","required":true,"type":"string"},{"name":"project_path","description":"Project directory to use as Codex working directory.","required":false,"type":"string"}],"examples":["codex exec --cd ./project --sandbox workspace-write -c 'approval_policy=\"never\"' \"Summarize this project\""]}
+"""#
+        ),
+        MarketplaceCLIItem(
+            id: "excel-cli",
+            name: "excel-cli",
+            kind: "tool",
+            icon: "tablecells",
+            description: "Spreadsheet inspection, conversion, and lightweight reporting commands.",
+            manifestJSON: #"""
+{"name":"excel-cli","kind":"tool","description":"Spreadsheet inspection, conversion, and lightweight reporting commands.","version":"0.1.0","command":"scriptron-excel","args_schema":[{"name":"path","description":"Workbook or CSV path.","required":true,"type":"string"},{"name":"task","description":"What to inspect or generate.","required":true,"type":"string"}],"examples":["excel-cli --path ./report.xlsx --task summarize"]}
+"""#
+        ),
+        MarketplaceCLIItem(
+            id: "pdf-cli",
+            name: "pdf-cli",
+            kind: "tool",
+            icon: "doc.richtext",
+            description: "PDF text extraction and document summary helper.",
+            manifestJSON: #"""
+{"name":"pdf-cli","kind":"tool","description":"PDF text extraction and document summary helper.","version":"0.1.0","command":"scriptron-pdf","args_schema":[{"name":"path","description":"PDF file path.","required":true,"type":"string"},{"name":"task","description":"Extraction or summary request.","required":true,"type":"string"}],"examples":["pdf-cli --path ./packet.pdf --task extract"]}
+"""#
+        ),
+        MarketplaceCLIItem(
+            id: "local-llm-cli",
+            name: "local-llm-cli",
+            kind: "model",
+            icon: "memorychip",
+            description: "Template model adapter for a local model server or custom inference command.",
+            manifestJSON: #"""
+{"name":"local-llm-cli","kind":"model","description":"Template model adapter for a local model server or custom inference command.","version":"0.1.0","command":"/absolute/path/to/local-model-cli","args_schema":[{"name":"prompt","description":"Prompt to send to the local model.","required":true,"type":"string"}],"examples":["local-model-cli --prompt \"Summarize this project\""]}
+"""#
+        )
+    ]
 }
 
 private struct FloatingAgentChat: View {
     @EnvironmentObject private var model: AppModel
     @Binding var expanded: Bool
     @State private var draft = ""
+    @State private var mentionTab = "Tools"
+    @State private var tronModuleItem: MentionItem?
     @FocusState private var inputFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Label("Agent", systemImage: "sparkles")
+                Label(model.tr("Agent", "Agent"), systemImage: "sparkles")
                     .font(.system(size: 13, weight: .bold))
                 Spacer()
                 Button { expanded.toggle() } label: {
@@ -304,8 +1049,18 @@ private struct FloatingAgentChat: View {
                         .padding(12)
                     }
                     .frame(height: 250)
+                    if mentionQuery != nil {
+                        MentionPicker(
+                            tab: $mentionTab,
+                            moduleItem: $tronModuleItem,
+                            onSelect: insertMention
+                        )
+                        .environmentObject(model)
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, 6)
+                    }
                     HStack(spacing: 8) {
-                        TextField("Ask the workspace agent...", text: $draft)
+                        TextField(model.tr("Ask the workspace agent...", "询问工作区 Agent..."), text: $draft)
                             .textFieldStyle(.plain)
                             .focused($inputFocused)
                             .padding(.horizontal, 12)
@@ -313,6 +1068,7 @@ private struct FloatingAgentChat: View {
                             .background(.white.opacity(0.68), in: Capsule())
                             .overlay(Capsule().stroke(Color.hairline.opacity(0.45), lineWidth: 1))
                             .onSubmit(send)
+                            .onChange(of: draft) { _ in updateMentionSearch() }
                         Button(action: send) {
                             Image(systemName: "arrow.up.circle.fill")
                                 .font(.system(size: 24))
@@ -335,7 +1091,40 @@ private struct FloatingAgentChat: View {
     private func send() {
         model.sendAgentMessage(draft)
         draft = ""
+        tronModuleItem = nil
         focusInputIfNeeded()
+    }
+
+    private var mentionQuery: String? {
+        guard let at = draft.lastIndex(of: "@") else { return nil }
+        let suffix = String(draft[draft.index(after: at)...])
+        if suffix.contains(where: { $0.isWhitespace }) { return nil }
+        return suffix
+    }
+
+    private func updateMentionSearch() {
+        guard let mentionQuery else {
+            tronModuleItem = nil
+            return
+        }
+        model.searchMentions(query: mentionQuery)
+    }
+
+    private func insertMention(_ item: MentionItem, _ module: MentionModule?) {
+        model.selectMention(item, module: module)
+        let token: String
+        if let module {
+            token = "@\(item.label)#\(module.name)"
+        } else {
+            token = "@\(item.label)"
+        }
+        if let at = draft.lastIndex(of: "@") {
+            draft.replaceSubrange(at..<draft.endIndex, with: token + " ")
+        } else {
+            draft += token + " "
+        }
+        tronModuleItem = nil
+        inputFocused = true
     }
 
     private func focusInputIfNeeded() {
@@ -346,16 +1135,90 @@ private struct FloatingAgentChat: View {
     }
 }
 
+private struct MentionPicker: View {
+    @EnvironmentObject private var model: AppModel
+    @Binding var tab: String
+    @Binding var moduleItem: MentionItem?
+    let onSelect: (MentionItem, MentionModule?) -> Void
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            VStack(spacing: 8) {
+                Picker("", selection: $tab) {
+                    Text(model.tr("Skills", "Skills")).tag("Tools")
+                    Text(model.tr("Files", "文件")).tag("Files")
+                }
+                .pickerStyle(.segmented)
+
+                ScrollView {
+                    VStack(spacing: 6) {
+                        ForEach(items) { item in
+                            Button {
+                                moduleItem = nil
+                                onSelect(item, nil)
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: icon(for: item))
+                                        .frame(width: 18)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(item.label).font(.system(size: 12, weight: .bold)).lineLimit(1)
+                                        Text(item.detail).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                                    }
+                                    Spacer()
+                                    if !item.installed {
+                                        Text(model.tr("CLOUD", "云端")).font(.system(size: 8, weight: .bold)).foregroundStyle(Color.primaryGreen)
+                                    }
+                                }
+                                .padding(8)
+                                .background(.white.opacity(0.72), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+                .frame(maxHeight: 170)
+            }
+            .padding(10)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(.white.opacity(0.32), lineWidth: 1))
+        }
+    }
+
+    private var items: [MentionItem] {
+        if tab == "Tools" {
+            return model.mentionSearch.tools + model.mentionSearch.cloud_suggestions
+        }
+        return model.mentionSearch.files
+    }
+
+    private func icon(for item: MentionItem) -> String {
+        switch item.kind {
+        case "tool", "software", "model": return "terminal"
+        case "tron": return "doc.richtext"
+        case "cloud": return "icloud"
+        default: return "doc"
+        }
+    }
+}
+
 private struct ChatBubble: View {
+    @EnvironmentObject private var model: AppModel
     let message: AppModel.ChatMessage
 
     private var isUser: Bool { message.role == "user" }
+    private var roleLabel: String {
+        switch message.role {
+        case "user": model.tr("USER", "用户")
+        case "system": model.tr("SYSTEM", "系统")
+        default: model.tr("AGENT", "AGENT")
+        }
+    }
 
     var body: some View {
         HStack {
             if isUser { Spacer(minLength: 40) }
             VStack(alignment: .leading, spacing: 4) {
-                Text(message.role.uppercased())
+                Text(roleLabel)
                     .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.secondary)
                 Text(message.content)
@@ -378,16 +1241,16 @@ private struct NewProjectSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            Text("New Project").font(.system(size: 28, weight: .bold))
+            Text(model.tr("New Project", "新建项目")).font(.system(size: 28, weight: .bold))
             TextField("customer-onboarding", text: $projectName)
                 .textFieldStyle(.roundedBorder)
                 .focused($nameFocused)
                 .onSubmit(createProject)
             HStack {
                 Spacer()
-                Button("Cancel") { isPresented = false }
+                Button(model.tr("Cancel", "取消")) { isPresented = false }
                     .buttonStyle(SheetActionButtonStyle())
-                Button("Create") {
+                Button(model.tr("Create", "创建")) {
                     createProject()
                 }
                 .buttonStyle(SheetActionButtonStyle(primary: true))

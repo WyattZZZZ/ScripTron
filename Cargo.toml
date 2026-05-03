@@ -8,6 +8,7 @@ members = [
     "crates/auth",
     "crates/scriptron-core",
     "crates/scriptron-ffi",
+    "crates/scriptron-cli",
 ]
 resolver = "2"
 

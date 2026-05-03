@@ -38,19 +38,30 @@ pub async fn save_tron_file(
         &cells,
         &blackboard.unwrap_or_else(|| serde_json::json!({})),
     );
-    tokio::fs::write(&path, content).await.map_err(|e| e.to_string())
+    tokio::fs::write(&path, content)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn create_tron_file(path: String) -> Result<TronFileDto, String> {
-    let cells = vec![TronCell { run: true, content: String::new() }];
+    let cells = vec![TronCell {
+        run: true,
+        content: String::new(),
+    }];
     let blackboard = serde_json::json!({
         "entries": [],
         "notes": []
     });
     let content = tron_parser::serialize_with_blackboard(&cells, &blackboard);
-    tokio::fs::write(&path, &content).await.map_err(|e| e.to_string())?;
-    Ok(TronFileDto { path, cells, blackboard })
+    tokio::fs::write(&path, &content)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(TronFileDto {
+        path,
+        cells,
+        blackboard,
+    })
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -77,10 +88,17 @@ async fn list_dir(dir: impl AsRef<std::path::Path>) -> Result<Vec<FileEntry>, St
     while let Some(entry) = rd.next_entry().await.map_err(|e| e.to_string())? {
         let path = entry.path();
         let name = entry.file_name().to_string_lossy().into_owned();
-        if name.starts_with('.') { continue; }
+        if name.starts_with('.') {
+            continue;
+        }
         let is_dir = path.is_dir();
         let is_tron = path.extension().map(|e| e == "tron").unwrap_or(false);
-        entries.push(FileEntry { name, path: path.to_string_lossy().into_owned(), is_dir, is_tron });
+        entries.push(FileEntry {
+            name,
+            path: path.to_string_lossy().into_owned(),
+            is_dir,
+            is_tron,
+        });
     }
     entries.sort_by(|a, b| b.is_dir.cmp(&a.is_dir).then(a.name.cmp(&b.name)));
     Ok(entries)
@@ -171,7 +189,11 @@ pub async fn store_api_key(
 ) -> Result<(), String> {
     let p = parse_provider(&provider)?;
     let creds = Credentials::from_api_key(api_key);
-    state.auth.store(&p, &creds).await.map_err(|e| e.to_string())
+    state
+        .auth
+        .store(&p, &creds)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -186,10 +208,7 @@ pub async fn disconnect_provider(
 /// Start a PKCE OAuth flow for providers that support it (Gemini).
 /// Opens the browser and waits for the redirect — may take 30-120 seconds.
 #[tauri::command]
-pub async fn start_oauth_flow(
-    state: State<'_, AppState>,
-    provider: String,
-) -> Result<(), String> {
+pub async fn start_oauth_flow(state: State<'_, AppState>, provider: String) -> Result<(), String> {
     let p = parse_provider(&provider)?;
 
     match p.auth_method() {
@@ -202,15 +221,28 @@ pub async fn start_oauth_flow(
                 scopes: cfg.scopes.iter().map(|s| s.to_string()).collect(),
             };
             let creds = flow.run().await.map_err(|e| e.to_string())?;
-            state.auth.store(&p, &creds).await.map_err(|e| e.to_string())
+            state
+                .auth
+                .store(&p, &creds)
+                .await
+                .map_err(|e| e.to_string())
         }
         auth::AuthMethod::OpenRouterOAuth => {
-            let creds = state.auth.openrouter_oauth().await.map_err(|e| e.to_string())?;
-            state.auth.store(&p, &creds).await.map_err(|e| e.to_string())
+            let creds = state
+                .auth
+                .openrouter_oauth()
+                .await
+                .map_err(|e| e.to_string())?;
+            state
+                .auth
+                .store(&p, &creds)
+                .await
+                .map_err(|e| e.to_string())
         }
-        auth::AuthMethod::ApiKey => {
-            Err(format!("{} uses API key auth — use store_api_key instead", provider))
-        }
+        auth::AuthMethod::ApiKey => Err(format!(
+            "{} uses API key auth — use store_api_key instead",
+            provider
+        )),
     }
 }
 
@@ -238,7 +270,10 @@ pub async fn set_active_config(
     model: String,
 ) -> Result<(), String> {
     let p = parse_provider(&provider)?;
-    let cfg = AppConfig { active_provider: p, active_model: model };
+    let cfg = AppConfig {
+        active_provider: p,
+        active_model: model,
+    };
     state.set_config(cfg).await
 }
 

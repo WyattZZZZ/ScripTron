@@ -78,6 +78,27 @@ The current FFI bridge exposes:
 
 `run_task_preview` and `poll_events` are the first polling queue version. Real agent execution should reuse the same event shape and replace preview events with live `agent-loop` output.
 
+## Workspace Metadata
+
+On startup, `scriptron-core` ensures the user workspace exists at `~/ScripTron` and contains:
+
+- `.troner.json`: workspace-level agent memory shared across projects.
+- `.register/`: workspace-local CLI registry. Entries can be model CLIs or software/tool CLIs.
+
+Registry manifests support an optional `kind` field:
+
+```json
+{
+  "name": "local-model-cli",
+  "kind": "model",
+  "description": "Runs a local model through a CLI adapter.",
+  "version": "1.0.0",
+  "command": "local-model-cli"
+}
+```
+
+If `kind` is omitted, it defaults to `tool`. Existing legacy manifests from `~/.scriptron/registry` are copied into `~/ScripTron/.register` the first time the new workspace registry is initialized.
+
 ## Build
 
 ```bash

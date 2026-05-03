@@ -36,7 +36,10 @@ fn default_timeout() -> u64 {
 }
 
 impl ProcessConfig {
-    pub fn new(command: impl Into<String>, args: impl IntoIterator<Item = impl Into<String>>) -> Self {
+    pub fn new(
+        command: impl Into<String>,
+        args: impl IntoIterator<Item = impl Into<String>>,
+    ) -> Self {
         Self {
             command: command.into(),
             args: args.into_iter().map(Into::into).collect(),

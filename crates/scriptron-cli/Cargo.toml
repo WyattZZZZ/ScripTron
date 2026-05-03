@@ -1,0 +1,13 @@
+[package]
+name = "scriptron-cli"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "scriptron"
+path = "src/main.rs"
+
+[dependencies]
+serde_json = { workspace = true }
+chrono = { workspace = true }
+tron-parser = { path = "../tron-parser" }

@@ -12,6 +12,10 @@ struct RootView: View {
                 ProjectStudioView()
             }
         }
+        .preferredColorScheme(.light)
+        .environment(\.colorScheme, .light)
+        .foregroundStyle(Color.appText)
+        .background(Color.appBackground)
         .alert("ScripTron", isPresented: Binding(
             get: { model.errorMessage != nil },
             set: { if !$0 { model.errorMessage = nil } }
@@ -22,4 +26,3 @@ struct RootView: View {
         }
     }
 }
-

@@ -3,17 +3,29 @@
 <plist version="1.0">
 <dict>
 	<key>files</key>
-	<dict/>
+	<dict>
+		<key>Resources/bin/scriptron</key>
+		<data>
+		ylGNSmfiT7oKS/rBkZYHncCAqWI=
+		</data>
+	</dict>
 	<key>files2</key>
 	<dict>
 		<key>Frameworks/libscriptron_ffi.dylib</key>
 		<dict>
 			<key>cdhash</key>
 			<data>
-			Ji/UqIm2oBBQioAePhns2V3wZEo=
+			rm10avRVBFqPd4MjT6AQDk6eHzo=
 			</data>
 			<key>requirement</key>
-			<string>cdhash H"262fd4a889b6a010508a801e3e19ecd95df0644a"</string>
+			<string>cdhash H"ae6d746af455045a8f7783234fa0100e4e9e1f3a"</string>
+		</dict>
+		<key>Resources/bin/scriptron</key>
+		<dict>
+			<key>hash2</key>
+			<data>
+			M4g6sO9bgeVpO6q5hrkO7golDynBIXKu368txsbtna4=
+			</data>
 		</dict>
 	</dict>
 	<key>rules</key>

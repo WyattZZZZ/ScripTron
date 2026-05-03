@@ -37,6 +37,9 @@ pub struct TronTask {
     pub instructions: Vec<String>,
     /// Static context from `run: false` cells (notes / docs the agent can read).
     pub context: Vec<String>,
+    /// Hidden per-file state carried at the top of the `.tron` file.
+    #[serde(default)]
+    pub blackboard: serde_json::Value,
     pub project_path: PathBuf,
 }
 
@@ -58,6 +61,7 @@ impl TronFile {
         TronTask {
             instructions,
             context,
+            blackboard: self.blackboard.clone(),
             project_path: project_path.into(),
         }
     }
@@ -113,7 +117,11 @@ pub fn parse_str(src: &str) -> Result<Vec<TronCell>, ParseError> {
             }
 
             // Trim trailing blank lines from body
-            while body_lines.last().map(|l| l.trim().is_empty()).unwrap_or(false) {
+            while body_lines
+                .last()
+                .map(|l| l.trim().is_empty())
+                .unwrap_or(false)
+            {
                 body_lines.pop();
             }
 
@@ -135,7 +143,10 @@ pub fn parse_str(src: &str) -> Result<Vec<TronCell>, ParseError> {
             }
             let content = body_lines.join("\n").trim().to_string();
             if !content.is_empty() {
-                cells.push(TronCell { run: false, content });
+                cells.push(TronCell {
+                    run: false,
+                    content,
+                });
             }
         }
     }
@@ -206,7 +217,10 @@ mod tests {
         assert_eq!(cells.len(), 2);
         assert!(cells[0].run);
         assert!(!cells[1].run);
-        assert_eq!(serialize_with_blackboard(&cells, &serde_json::json!({})), src);
+        assert_eq!(
+            serialize_with_blackboard(&cells, &serde_json::json!({})),
+            src
+        );
     }
 
     #[test]
@@ -220,13 +234,30 @@ mod tests {
     #[test]
     fn build_task_splits_correctly() {
         let cells = vec![
-            TronCell { run: true, content: "Instruction one".into() },
-            TronCell { run: false, content: "Context note".into() },
-            TronCell { run: true, content: "Instruction two".into() },
+            TronCell {
+                run: true,
+                content: "Instruction one".into(),
+            },
+            TronCell {
+                run: false,
+                content: "Context note".into(),
+            },
+            TronCell {
+                run: true,
+                content: "Instruction two".into(),
+            },
         ];
-        let file = TronFile { path: PathBuf::from("test.tron"), cells, blackboard: serde_json::json!({}) };
+        let file = TronFile {
+            path: PathBuf::from("test.tron"),
+            cells,
+            blackboard: serde_json::json!({}),
+        };
         let task = file.build_task("/tmp");
-        assert_eq!(task.instructions, vec!["Instruction one", "Instruction two"]);
+        assert_eq!(
+            task.instructions,
+            vec!["Instruction one", "Instruction two"]
+        );
         assert_eq!(task.context, vec!["Context note"]);
+        assert_eq!(task.blackboard, serde_json::json!({}));
     }
 }

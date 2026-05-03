@@ -72,6 +72,118 @@ struct ActiveConfig: Decodable {
     let model: String
 }
 
+struct CLIArgSchema: Codable, Identifiable {
+    var id: String { name }
+    let name: String
+    let description: String
+    let required: Bool
+    let type: String
+}
+
+struct CLIManifest: Codable, Identifiable {
+    var id: String { name }
+    let name: String
+    let kind: String
+    let description: String
+    let version: String
+    let command: String
+    let args_schema: [CLIArgSchema]
+    let examples: [String]
+    let homepage: String?
+    let author: String?
+}
+
+struct TronhubEntry: Codable, Identifiable {
+    var id: String { "\(kind):\(name)" }
+    let name: String
+    let kind: String
+    let description: String
+    let source_path: String
+    let installed: Bool
+    let manifest_json: String?
+}
+
+struct SkillEntry: Codable, Identifiable {
+    var id: String { name }
+    let name: String
+    let description: String
+    let path: String
+}
+
+struct MemoryNote: Codable, Identifiable {
+    let id: String
+    var scope: String
+    var content: String
+    var source: String
+    var created_at: String
+}
+
+struct GlobalMemory: Codable {
+    var user_name_preference: String
+    var agent_style_preference: String
+    var execution_rules: [String]
+    var notes: [MemoryNote]
+}
+
+struct ProjectMemory: Codable {
+    var project_path: String
+    var project_name: String
+    var archived: Bool
+    var format_rules: [String]
+    var task_constraints: [String]
+    var glossary: [String: String]
+    var long_context: [MemoryNote]
+}
+
+struct SkillRetryAttempt: Codable, Identifiable {
+    var id: String { "\(attempt)-\(created_at)" }
+    let attempt: Int
+    let status: String
+    let reason: String
+    let correction: String
+    let input: AnyCodable
+    let output: String
+    let created_at: String
+}
+
+struct SkillRetryTrace: Codable, Identifiable {
+    let id: String
+    let skill: String
+    let status: String
+    let attempts: [SkillRetryAttempt]
+    let created_at: String
+}
+
+struct MemorySnapshot: Decodable {
+    let global_memory: GlobalMemory
+    let project_memory: ProjectMemory
+    let effective_prompt: String
+    let skill_retry_traces: [SkillRetryTrace]
+}
+
+struct MentionModule: Codable, Identifiable {
+    var id: String { "\(kind):\(name):\(injection)" }
+    let name: String
+    let kind: String
+    let injection: String
+}
+
+struct MentionItem: Codable, Identifiable {
+    let id: String
+    let label: String
+    let kind: String
+    let path: String
+    let detail: String
+    let installed: Bool
+    let modules: [MentionModule]
+}
+
+struct MentionSearchResult: Decodable {
+    let tools: [MentionItem]
+    let files: [MentionItem]
+    let cloud_suggestions: [MentionItem]
+}
+
 struct AnyCodable: Codable {
     let value: Any
 
@@ -123,14 +235,16 @@ struct AnyCodable: Codable {
     }
 }
 
-@MainActor
-final class RustBridge {
+final class RustBridge: @unchecked Sendable {
     static let shared = RustBridge()
 
-    private let decoder = JSONDecoder()
+    private let lock = NSLock()
 
     func initialize() throws {
-        let response = readCString(scriptron_init())
+        let response = locked {
+            readCString(scriptron_init())
+        }
+        let decoder = JSONDecoder()
         let envelope = try decoder.decode(RpcEnvelope<AnyCodable>.self, from: Data(response.utf8))
         if !envelope.ok {
             throw BridgeError.runtime(envelope.error ?? "Unknown initialization failure")
@@ -144,9 +258,12 @@ final class RustBridge {
         ]
         let data = try JSONSerialization.data(withJSONObject: payload)
         let request = String(data: data, encoding: .utf8) ?? "{}"
-        let response = request.withCString { pointer in
-            readCString(scriptron_call(pointer))
+        let response = locked {
+            request.withCString { pointer in
+                readCString(scriptron_call(pointer))
+            }
         }
+        let decoder = JSONDecoder()
         let envelope = try decoder.decode(RpcEnvelope<T>.self, from: Data(response.utf8))
         if envelope.ok, let data = envelope.data {
             return data
@@ -155,7 +272,28 @@ final class RustBridge {
     }
 
     func callVoid(_ method: String, params: [String: Any] = [:]) throws {
-        let _: AnyCodable = try call(method, params: params, as: AnyCodable.self)
+        let payload: [String: Any] = [
+            "method": method,
+            "params": params
+        ]
+        let data = try JSONSerialization.data(withJSONObject: payload)
+        let request = String(data: data, encoding: .utf8) ?? "{}"
+        let response = locked {
+            request.withCString { pointer in
+                readCString(scriptron_call(pointer))
+            }
+        }
+        let decoder = JSONDecoder()
+        let envelope = try decoder.decode(RpcEnvelope<AnyCodable>.self, from: Data(response.utf8))
+        if !envelope.ok {
+            throw BridgeError.runtime(envelope.error ?? "Unknown Rust error")
+        }
+    }
+
+    private func locked<T>(_ work: () throws -> T) rethrows -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return try work()
     }
 
     private func readCString(_ pointer: UnsafeMutablePointer<CChar>?) -> String {

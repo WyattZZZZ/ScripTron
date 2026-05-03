@@ -1,7 +1,9 @@
 mod builtin_tools;
 mod llm;
 
-pub use llm::{AnthropicProvider, GeminiProvider, OpenAiCompatProvider, LlmProvider};
+pub use llm::{
+    AnthropicProvider, CliModelProvider, GeminiProvider, LlmProvider, OpenAiCompatProvider,
+};
 
 use cli_registry::CliRegistry;
 use process_runner::{ProcessConfig, ProcessRunner};
@@ -34,9 +36,16 @@ pub enum ExecutionEvent {
     /// The model is reasoning / generating text.
     Thinking { content: String },
     /// The model requested a tool call.
-    ToolCall { tool: String, args: serde_json::Value },
+    ToolCall {
+        tool: String,
+        args: serde_json::Value,
+    },
     /// Result of a tool call.
-    ToolResult { tool: String, output: String, success: bool },
+    ToolResult {
+        tool: String,
+        output: String,
+        success: bool,
+    },
     /// Final answer text from the model.
     Text { content: String },
     /// A non-fatal warning.
@@ -82,8 +91,32 @@ impl AgentLoop {
         let tools = build_tools(&registry);
         drop(registry);
 
-        // Combine all run:true cells into a single user turn
-        let user_content = task.instructions.join("\n\n---\n\n");
+        // Combine run:true cells, static document context, and blackboard into one user turn.
+        let mut user_sections = Vec::new();
+        if !task.context.is_empty() {
+            user_sections.push(format!(
+                "Document context from non-run markdown:\n{}",
+                task.context.join("\n\n---\n\n")
+            ));
+        }
+        if !task.blackboard.is_null()
+            && !(task.blackboard.is_object()
+                && task
+                    .blackboard
+                    .as_object()
+                    .map(|o| o.is_empty())
+                    .unwrap_or(false))
+        {
+            user_sections.push(format!(
+                "Hidden .tron blackboard state:\n{}",
+                serde_json::to_string_pretty(&task.blackboard).unwrap_or_else(|_| "{}".into())
+            ));
+        }
+        user_sections.push(format!(
+            "Run instructions:\n{}",
+            task.instructions.join("\n\n---\n\n")
+        ));
+        let user_content = user_sections.join("\n\n====\n\n");
 
         // Conversation history
         let mut messages: Vec<llm::ChatMessage> = vec![llm::ChatMessage {
@@ -201,9 +234,13 @@ impl AgentLoop {
             "list_files" => builtin_tools::list_files(input, project_path).await,
             "read_file" => builtin_tools::read_file(input, project_path).await,
             "write_file" => builtin_tools::write_file(input, project_path).await,
-            "run_command" => {
-                builtin_tools::run_command(input, project_path, &self.runner).await
-            }
+            "create_file" => builtin_tools::write_file(input, project_path).await,
+            "mkdir" => builtin_tools::create_dir(input, project_path).await,
+            "delete_path" => builtin_tools::delete_path(input, project_path).await,
+            "move_path" => builtin_tools::move_path(input, project_path).await,
+            "exec" => builtin_tools::run_command(input, project_path, &self.runner).await,
+            "run_command" => builtin_tools::run_command(input, project_path, &self.runner).await,
+            "codex" => builtin_tools::run_codex(input, project_path, &self.runner).await,
             "run_cli_tool" => {
                 let registry = self.registry.read().await;
                 self.run_cli_tool(input, project_path, &registry).await
@@ -254,17 +291,32 @@ impl AgentLoop {
 
 fn build_system_prompt(registry: &CliRegistry, project_path: &PathBuf) -> String {
     format!(
-        r#"You are ScripTron, an automation agent running on the user's local machine.
-You execute tasks described in natural language using the tools available to you.
+        r#"You are Troner, the built-in autonomous agent assistant inside ScripTron.
+ScripTron is a local-first automation studio, and you run inside the user's app with access to project files, installed skills, registered CLI tools, and local terminal execution.
+
+Your purpose:
+- Understand the user's real goal, not just the literal phrasing.
+- Plan and complete the task with the tools available to you.
+- Read relevant files, skills, manifests, and project context before making non-trivial changes.
+- Use installed skills from the workspace `.skills` directory when they match the task.
+- Use registered CLI tools from `.register` when they are more appropriate than raw shell commands.
+- Use terminal execution through `exec` / `run_command` when needed, while keeping commands scoped and explainable.
+- Prefer completing the task end-to-end over giving generic advice.
 
 Project path: {project}
+Workspace skill path: {project}/.skills when present, or the parent workspace `.skills` directory when working inside a project.
+Workspace CLI registry: {project}/.register when present, or the parent workspace `.register` directory when working inside a project.
 
 Rules:
 - Work entirely within the project path unless explicitly instructed otherwise.
 - Prefer reading before writing — verify the current state of files first.
 - After each tool call, check the result before proceeding.
 - If a step fails, report the error clearly and stop unless you can safely recover.
-- Be concise in your reasoning — focus on action.
+- Before using a skill, inspect its files enough to understand its expected workflow.
+- Before using a registered CLI, inspect its manifest or the registry prompt block and pass arguments according to its schema.
+- Do not invent installed capabilities. If a skill or CLI is missing, say what is missing and use the best available fallback.
+- Do not claim you performed an action unless a tool result confirms it.
+- Be concise in visible reasoning and focus on action, evidence, and outcome.
 
 {tools_section}"#,
         project = project_path.display(),
@@ -340,11 +392,70 @@ fn build_tools(registry: &CliRegistry) -> Vec<serde_json::Value> {
                 "required": ["command", "args"]
             }
         }),
+        serde_json::json!({
+            "name": "exec",
+            "description": "Run a shell command in the project directory. Alias for run_command.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string"},
+                    "args": {"type": "array", "items": {"type": "string"}},
+                    "working_dir": {"type": "string"}
+                },
+                "required": ["command", "args"]
+            }
+        }),
+        serde_json::json!({
+            "name": "mkdir",
+            "description": "Create a directory relative to the project directory.",
+            "input_schema": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"]
+            }
+        }),
+        serde_json::json!({
+            "name": "delete_path",
+            "description": "Delete a file or directory relative to the project directory.",
+            "input_schema": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"]
+            }
+        }),
+        serde_json::json!({
+            "name": "move_path",
+            "description": "Move or rename a file/directory relative to the project directory.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "from": {"type": "string"},
+                    "to": {"type": "string"}
+                },
+                "required": ["from", "to"]
+            }
+        }),
+        serde_json::json!({
+            "name": "codex",
+            "description": "Delegate a bounded project task to Codex CLI in non-interactive mode.",
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "prompt": {"type": "string"},
+                    "timeout_secs": {"type": "number"}
+                },
+                "required": ["prompt"]
+            }
+        }),
     ];
 
     // Add run_cli_tool only when tools are installed
     if !registry.list_tools().is_empty() {
-        let tool_names: Vec<&str> = registry.list_tools().iter().map(|t| t.name.as_str()).collect();
+        let tool_names: Vec<&str> = registry
+            .list_tools()
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect();
         tools.push(serde_json::json!({
             "name": "run_cli_tool",
             "description": format!(

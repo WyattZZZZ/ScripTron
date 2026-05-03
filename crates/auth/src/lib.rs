@@ -61,20 +61,20 @@ pub struct OAuthConfig {
 impl Provider {
     pub fn id(&self) -> &'static str {
         match self {
-            Provider::Anthropic  => "anthropic",
-            Provider::Gemini     => "gemini",
-            Provider::OpenAi     => "openai",
-            Provider::DeepSeek   => "deepseek",
+            Provider::Anthropic => "anthropic",
+            Provider::Gemini => "gemini",
+            Provider::OpenAi => "openai",
+            Provider::DeepSeek => "deepseek",
             Provider::OpenRouter => "openrouter",
         }
     }
 
     pub fn display_name(&self) -> &'static str {
         match self {
-            Provider::Anthropic  => "Claude (Anthropic)",
-            Provider::Gemini     => "Gemini (Google)",
-            Provider::OpenAi     => "GPT / Codex (OpenAI)",
-            Provider::DeepSeek   => "DeepSeek",
+            Provider::Anthropic => "Claude (Anthropic)",
+            Provider::Gemini => "Gemini (Google)",
+            Provider::OpenAi => "GPT / Codex (OpenAI)",
+            Provider::DeepSeek => "DeepSeek",
             Provider::OpenRouter => "OpenRouter",
         }
     }
@@ -82,11 +82,11 @@ impl Provider {
     pub fn auth_method(&self) -> AuthMethod {
         match self {
             Provider::Gemini => AuthMethod::Oauth(OAuthConfig {
-                auth_url:      "https://accounts.google.com/o/oauth2/v2/auth",
-                token_url:     "https://oauth2.googleapis.com/token",
+                auth_url: "https://accounts.google.com/o/oauth2/v2/auth",
+                token_url: "https://oauth2.googleapis.com/token",
                 // Replace with a real desktop OAuth client_id registered in Google Cloud Console.
                 // Desktop OAuth client_ids are non-confidential per Google's documentation.
-                client_id:     "REPLACE_WITH_GOOGLE_CLIENT_ID.apps.googleusercontent.com",
+                client_id: "REPLACE_WITH_GOOGLE_CLIENT_ID.apps.googleusercontent.com",
                 client_secret: None,
                 scopes: &["https://www.googleapis.com/auth/generative-language"],
             }),
@@ -108,16 +108,8 @@ impl Provider {
                 "gemini-2.0-flash",
                 "gemini-1.5-pro",
             ],
-            Provider::OpenAi => vec![
-                "gpt-4o",
-                "gpt-4.1",
-                "o3",
-                "o4-mini",
-            ],
-            Provider::DeepSeek => vec![
-                "deepseek-chat",
-                "deepseek-reasoner",
-            ],
+            Provider::OpenAi => vec!["gpt-4o", "gpt-4.1", "o3", "o4-mini"],
+            Provider::DeepSeek => vec!["deepseek-chat", "deepseek-reasoner"],
             Provider::OpenRouter => vec![
                 "anthropic/claude-opus-4-7",
                 "google/gemini-2.5-pro",
@@ -135,12 +127,12 @@ impl Provider {
 
     pub fn from_id(id: &str) -> Option<Self> {
         match id {
-            "anthropic"  => Some(Provider::Anthropic),
-            "gemini"     => Some(Provider::Gemini),
-            "openai"     => Some(Provider::OpenAi),
-            "deepseek"   => Some(Provider::DeepSeek),
+            "anthropic" => Some(Provider::Anthropic),
+            "gemini" => Some(Provider::Gemini),
+            "openai" => Some(Provider::OpenAi),
+            "deepseek" => Some(Provider::DeepSeek),
             "openrouter" => Some(Provider::OpenRouter),
-            _            => None,
+            _ => None,
         }
     }
 
@@ -177,7 +169,11 @@ impl Credentials {
     }
 
     pub fn from_api_key(key: String) -> Self {
-        Self { access_token: key, refresh_token: None, expires_at: None }
+        Self {
+            access_token: key,
+            refresh_token: None,
+            expires_at: None,
+        }
     }
 }
 
@@ -243,7 +239,9 @@ pub struct AuthManager {
 
 impl AuthManager {
     pub fn new(storage_dir: impl Into<PathBuf>) -> Self {
-        Self { storage_dir: storage_dir.into() }
+        Self {
+            storage_dir: storage_dir.into(),
+        }
     }
 
     /// Read Claude Code tokens from ~/.claude/.credentials.json (zero-friction reuse).
@@ -303,7 +301,11 @@ impl AuthManager {
             urlencoding_encode(&callback)
         );
 
-        let open_cmd = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+        let open_cmd = if cfg!(target_os = "macos") {
+            "open"
+        } else {
+            "xdg-open"
+        };
         tokio::process::Command::new(open_cmd)
             .arg(&auth_url)
             .spawn()
@@ -319,9 +321,13 @@ impl AuthManager {
         let mut buf = [0u8; 4096];
         loop {
             let n = stream.read(&mut buf).await.map_err(AuthError::Io)?;
-            if n == 0 { break; }
+            if n == 0 {
+                break;
+            }
             req.push_str(&String::from_utf8_lossy(&buf[..n]));
-            if req.contains("\r\n\r\n") { break; }
+            if req.contains("\r\n\r\n") {
+                break;
+            }
         }
 
         let query = req
@@ -347,7 +353,10 @@ impl AuthManager {
         // Exchange code for API key
         let client = reqwest::Client::new();
         let resp = client
-            .get(format!("https://openrouter.ai/api/v1/auth/keys?code={}", code))
+            .get(format!(
+                "https://openrouter.ai/api/v1/auth/keys?code={}",
+                code
+            ))
             .header("content-type", "application/json")
             .send()
             .await
@@ -391,9 +400,9 @@ pub async fn all_provider_statuses(manager: &AuthManager) -> Vec<ProviderStatus>
     for p in Provider::all() {
         let connected = manager.load(p).await.is_some();
         let method = match p.auth_method() {
-            AuthMethod::Oauth(_)       => "oauth",
+            AuthMethod::Oauth(_) => "oauth",
             AuthMethod::OpenRouterOAuth => "openrouter_oauth",
-            AuthMethod::ApiKey          => "api_key",
+            AuthMethod::ApiKey => "api_key",
         };
         out.push(ProviderStatus {
             provider: p.id().into(),

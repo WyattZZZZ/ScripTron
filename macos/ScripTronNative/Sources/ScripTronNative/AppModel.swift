@@ -4,6 +4,27 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class AppModel: ObservableObject {
+    static let defaultManifestDraft = """
+{
+  "name": "my-cli-tool",
+  "kind": "tool",
+  "description": "Describe what this local CLI does.",
+  "version": "0.1.0",
+  "command": "/absolute/path/to/tool",
+  "args_schema": [
+    {
+      "name": "input",
+      "description": "Input text or file path.",
+      "required": true,
+      "type": "string"
+    }
+  ],
+  "examples": [
+    "my-cli-tool --input ./data.csv"
+  ]
+}
+"""
+
     enum Screen {
         case workspace
         case project(ProjectPanel)
@@ -14,7 +35,10 @@ final class AppModel: ObservableObject {
         case archived = "Archived"
         case cliMarket = "CLI Market"
         case cliManagement = "CLI Management"
+        case skillMarket = "Skill Market"
+        case skillManagement = "Skill Management"
         case modelManagement = "Model Management"
+        case settings = "Settings"
 
         var id: String { rawValue }
     }
@@ -43,7 +67,13 @@ final class AppModel: ObservableObject {
 
     enum DocumentBlockKind: Equatable {
         case markdownLine
+        case heading(Int)
+        case list(Bool)
         case table
+        case quote
+        case code
+        case checklist
+        case divider
         case run
         case gen
     }
@@ -52,6 +82,38 @@ final class AppModel: ObservableObject {
         let id = UUID()
         var kind: DocumentBlockKind
         var content: String
+        var name: String = ""
+    }
+
+    enum ViewerKind: String {
+        case code = "Code"
+        case csv = "CSV"
+        case text = "Text"
+        case pdf = "PDF"
+        case word = "Word"
+        case excel = "Excel"
+        case quickLook = "Preview"
+        case unsupported = "Unsupported"
+    }
+
+    struct OpenedFile {
+        var name: String
+        var path: String
+        var content: String
+        var viewer: ViewerKind
+        var language: String
+    }
+
+    private struct ExternalTabState {
+        var file: OpenedFile
+        var dirty: Bool
+    }
+
+    private struct TronTabState {
+        var file: TronFile
+        var draftCells: [TronCell]
+        var documentBlocks: [DocumentBlock]
+        var dirty: Bool
     }
 
     @Published var screen: Screen = .workspace
@@ -60,13 +122,39 @@ final class AppModel: ObservableObject {
     @Published var activeProjectPath: String?
     @Published var activeProjectName = ""
     @Published var files: [FileEntry] = []
+    @Published var expandedFolders = Set<String>()
+    @Published var folderChildren: [String: [FileEntry]] = [:]
     @Published var projects: [ProjectItem] = []
     @Published var selectedFile: TronFile?
+    @Published var openedFile: OpenedFile?
+    @Published var openTabs: [FileEntry] = []
+    @Published var activeTabPath: String?
+    @Published var dirtyTabPaths = Set<String>()
+    @Published var draggedFilePath: String?
+    @Published var dropHoverFolderPath: String?
     @Published var draftCells: [TronCell] = []
     @Published var documentBlocks: [DocumentBlock] = []
     @Published var isDirty = false
     @Published var newScriptName = "untitled"
     @Published var runEvents: [RunEvent] = []
+    @Published var runEventsBlockID: UUID?
+    @Published var isRunningTask = false
+    @Published var selectedDocumentBlockIDs = Set<UUID>()
+    @Published var lastSelectedDocumentBlockID: UUID?
+    @Published var memorySnapshot: MemorySnapshot?
+    @Published var cliRegistry: [CLIManifest] = []
+    @Published var installedSkills: [SkillEntry] = []
+    @Published var tronhubClis: [TronhubEntry] = []
+    @Published var tronhubModels: [TronhubEntry] = []
+    @Published var tronhubSkills: [TronhubEntry] = []
+    @Published var activeConfig: ActiveConfig?
+    @Published var installManifestDraft = AppModel.defaultManifestDraft
+    @Published var mentionSearch = MentionSearchResult(tools: [], files: [], cloud_suggestions: [])
+    @Published var functionMentions: [MentionItem] = []
+    @Published var selectedMentions: [MentionItem] = []
+    @Published var agentBusy = false
+    @Published var appLanguage = UserDefaults.standard.string(forKey: "scriptron.appLanguage") ?? "en"
+    @Published var skillTraceDraft = "excel-cli"
     @Published var chatMessages: [ChatMessage] = [
         ChatMessage(role: "system", content: "Workspace Agent is scoped to project planning, file organization, CLI setup, and model configuration. It should not promise sharing or cloud collaboration features.")
     ]
@@ -74,6 +162,8 @@ final class AppModel: ObservableObject {
     @Published var errorMessage: String?
 
     private let bridge = RustBridge.shared
+    private var externalTabStates: [String: ExternalTabState] = [:]
+    private var tronTabStates: [String: TronTabState] = [:]
 
     private var projectRootPath: String {
         activeProjectPath ?? workspacePath
@@ -83,8 +173,11 @@ final class AppModel: ObservableObject {
         do {
             try bridge.initialize()
             workspacePath = try bridge.call("get_workspace_path", as: String.self)
-            files = try bridge.call("list_workspace_files", as: [FileEntry].self)
-            rebuildProjects()
+            if case .project = screen, activeProjectPath == nil {
+                screen = .workspace
+            }
+            refreshFiles()
+            loadWorkspaceManagementData()
             status = "Connected"
         } catch {
             errorMessage = error.localizedDescription
@@ -93,16 +186,29 @@ final class AppModel: ObservableObject {
     }
 
     func openProject(panel: ProjectPanel = .explorer) {
+        guard activeProjectPath != nil else {
+            showWorkspace()
+            return
+        }
         screen = .project(panel)
         loadProjectFiles()
+        loadMemorySnapshot()
     }
 
     func openProject(_ project: ProjectItem, panel: ProjectPanel = .explorer) {
         activeProjectPath = project.path
         activeProjectName = project.name
         selectedFile = nil
+        openedFile = nil
+        openTabs = []
+        activeTabPath = nil
+        dirtyTabPaths = []
+        externalTabStates = [:]
+        tronTabStates = [:]
         draftCells = []
         documentBlocks = []
+        selectedDocumentBlockIDs = []
+        lastSelectedDocumentBlockID = nil
         isDirty = false
         screen = .project(panel)
         loadProjectFiles()
@@ -113,20 +219,36 @@ final class AppModel: ObservableObject {
         activeProjectPath = nil
         activeProjectName = ""
         selectedFile = nil
+        openedFile = nil
+        openTabs = []
+        activeTabPath = nil
+        dirtyTabPaths = []
+        externalTabStates = [:]
+        tronTabStates = [:]
         draftCells = []
         documentBlocks = []
+        selectedDocumentBlockIDs = []
+        lastSelectedDocumentBlockID = nil
         isDirty = false
         refreshFiles()
     }
 
     func selectPanel(_ panel: ProjectPanel) {
+        guard activeProjectPath != nil else {
+            showWorkspace()
+            return
+        }
         screen = .project(panel)
+        if panel == .settings {
+            loadMemorySnapshot()
+        }
     }
 
     func refreshFiles() {
         do {
             if activeProjectPath != nil, case .project = screen {
                 files = try bridge.call("list_dir_files", params: ["path": projectRootPath], as: [FileEntry].self)
+                reloadExpandedFolders()
             } else {
                 files = try bridge.call("list_workspace_files", as: [FileEntry].self)
                 rebuildProjects()
@@ -140,6 +262,7 @@ final class AppModel: ObservableObject {
     private func loadProjectFiles() {
         do {
             files = try bridge.call("list_dir_files", params: ["path": projectRootPath], as: [FileEntry].self)
+            updateFunctionRegistry()
             status = activeProjectName.isEmpty ? "Project opened" : "Opened \(activeProjectName)"
         } catch {
             errorMessage = error.localizedDescription
@@ -149,6 +272,141 @@ final class AppModel: ObservableObject {
 
     func selectWorkspacePanel(_ panel: WorkspacePanel) {
         workspacePanel = panel
+        if panel == .cliMarket || panel == .cliManagement || panel == .skillMarket || panel == .skillManagement || panel == .modelManagement {
+            loadWorkspaceManagementData()
+        }
+        if panel == .settings {
+            loadMemorySnapshot()
+        }
+    }
+
+    func loadWorkspaceManagementData() {
+        refreshRegistry()
+        loadActiveConfig()
+        refreshSkills()
+        refreshTronhub()
+    }
+
+    func refreshRegistry() {
+        do {
+            cliRegistry = try bridge.call("list_tools", as: [CLIManifest].self)
+            status = "Registry refreshed"
+        } catch {
+            errorMessage = error.localizedDescription
+            status = "Registry failed"
+        }
+    }
+
+    func loadActiveConfig() {
+        do {
+            activeConfig = try bridge.call("get_active_config", as: ActiveConfig.self)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func syncTronhub() {
+        do {
+            try bridge.callVoid("sync_tronhub")
+            refreshRegistry()
+            refreshSkills()
+            refreshTronhub()
+            loadActiveConfig()
+            status = "TronHub synced"
+        } catch {
+            errorMessage = error.localizedDescription
+            status = "TronHub sync failed"
+        }
+    }
+
+    func refreshTronhub() {
+        do {
+            tronhubClis = try bridge.call("list_tronhub", params: ["kind": "cli"], as: [TronhubEntry].self)
+            tronhubModels = try bridge.call("list_tronhub", params: ["kind": "model"], as: [TronhubEntry].self)
+            tronhubSkills = try bridge.call("list_tronhub", params: ["kind": "skill"], as: [TronhubEntry].self)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func refreshSkills() {
+        do {
+            installedSkills = try bridge.call("list_skills", as: [SkillEntry].self)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func installTronhub(_ entry: TronhubEntry) {
+        do {
+            try bridge.callVoid("install_tronhub", params: ["kind": entry.kind, "name": entry.name])
+            refreshRegistry()
+            refreshSkills()
+            refreshTronhub()
+            loadActiveConfig()
+            status = "Installed \(entry.name)"
+        } catch {
+            errorMessage = error.localizedDescription
+            status = "Install failed"
+        }
+    }
+
+    func installCLIManifest(_ manifestJSON: String) {
+        do {
+            try bridge.callVoid("install_tool_from_json", params: ["manifest_json": manifestJSON])
+            refreshRegistry()
+            installManifestDraft = Self.defaultManifestDraft
+            status = "CLI installed"
+        } catch {
+            errorMessage = error.localizedDescription
+            status = "CLI install failed"
+        }
+    }
+
+    func removeCLI(_ manifest: CLIManifest) {
+        do {
+            try bridge.callVoid("remove_tool", params: ["name": manifest.name])
+            refreshRegistry()
+            if activeConfig?.model == manifest.name {
+                loadActiveConfig()
+            }
+            status = "CLI removed"
+        } catch {
+            errorMessage = error.localizedDescription
+            status = "CLI remove failed"
+        }
+    }
+
+    func removeSkill(_ skill: SkillEntry) {
+        do {
+            try bridge.callVoid("remove_skill", params: ["name": skill.name])
+            refreshSkills()
+            refreshTronhub()
+            status = "Skill removed"
+        } catch {
+            errorMessage = error.localizedDescription
+            status = "Skill remove failed"
+        }
+    }
+
+    func activateModelCLI(_ manifest: CLIManifest) {
+        do {
+            if manifest.name == "codex-cli" {
+                let loginStatus = try bridge.call("codex_login_status", as: String.self)
+                if !loginStatus.localizedCaseInsensitiveContains("logged in") {
+                    try bridge.callVoid("start_codex_login")
+                    status = "Codex login started"
+                    errorMessage = "Codex CLI needs OAuth login. Complete the browser login, then activate codex-cli again."
+                    return
+                }
+            }
+            try bridge.callVoid("set_active_config", params: ["provider": "openai", "model": manifest.name])
+            loadActiveConfig()
+            status = "Model set to \(manifest.name)"
+        } catch {
+            errorMessage = error.localizedDescription
+            status = "Model switch failed"
+        }
     }
 
     func createProject(named rawName: String) {
@@ -169,6 +427,49 @@ final class AppModel: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
             status = "Create project failed"
+        }
+    }
+
+    func importProjectZipDrops(_ providers: [NSItemProvider]) -> Bool {
+        guard !providers.isEmpty else { return false }
+        status = "Importing zip project..."
+
+        for provider in providers {
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { [weak self] item, error in
+                guard let self else { return }
+                guard let sourceURL = Self.fileURL(from: item), error == nil else {
+                    Task { @MainActor in
+                        self.errorMessage = error?.localizedDescription ?? "Could not read dropped zip file."
+                        self.status = "Import failed"
+                    }
+                    return
+                }
+
+                Task { @MainActor in
+                    self.startZipProjectImport(from: sourceURL)
+                }
+            }
+        }
+
+        return true
+    }
+
+    private func startZipProjectImport(from sourceURL: URL) {
+        let workspacePath = workspacePath
+        Task.detached(priority: .userInitiated) {
+            do {
+                let result = try Self.importZipProject(from: sourceURL, intoWorkspaceAt: workspacePath)
+                await MainActor.run {
+                    self.workspacePanel = .allProjects
+                    self.refreshFiles()
+                    self.status = "Imported \(result.projectName)"
+                }
+            } catch {
+                await MainActor.run {
+                    self.errorMessage = error.localizedDescription
+                    self.status = "Import failed"
+                }
+            }
         }
     }
 
@@ -209,21 +510,355 @@ final class AppModel: ObservableObject {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         chatMessages.append(ChatMessage(role: "user", content: trimmed))
-        chatMessages.append(ChatMessage(role: "agent", content: "Plan noted. I can help organize projects, scripts, CLI tools, and model settings inside this local workspace."))
+        agentBusy = true
+        chatMessages.append(ChatMessage(role: "agent", content: "Troner Agent is working..."))
+        let placeholderID = chatMessages.last?.id
+        let bridge = bridge
+        let projectPath = activeProjectPath ?? workspacePath
+        Task.detached(priority: .userInitiated) {
+            let response: String
+            do {
+                response = try bridge.call(
+                    "troner_agent_message",
+                    params: [
+                        "message": trimmed,
+                        "project_path": projectPath
+                    ],
+                    as: String.self
+                )
+            } catch {
+                response = "Error: \(error.localizedDescription)"
+            }
+
+            await MainActor.run {
+                if let placeholderID, let index = self.chatMessages.firstIndex(where: { $0.id == placeholderID }) {
+                    self.chatMessages[index] = ChatMessage(role: "agent", content: response)
+                } else {
+                    self.chatMessages.append(ChatMessage(role: "agent", content: response))
+                }
+                self.agentBusy = false
+            }
+        }
+    }
+
+    func loadMemorySnapshot() {
+        do {
+            memorySnapshot = try bridge.call(
+                "get_memory_snapshot",
+                params: ["project_path": activeProjectPath ?? ""],
+                as: MemorySnapshot.self
+            )
+            status = "Memory loaded"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func saveGlobalMemory(_ memory: GlobalMemory) {
+        do {
+            try bridge.callVoid("update_global_memory", params: ["global_memory": try encodeJSONObject(memory)])
+            loadMemorySnapshot()
+            status = "Global memory saved"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func saveProjectMemory(_ memory: ProjectMemory) {
+        do {
+            try bridge.callVoid("update_project_memory", params: ["project_memory": try encodeJSONObject(memory)])
+            loadMemorySnapshot()
+            status = "Project memory saved"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func setAppLanguage(_ language: String) {
+        appLanguage = language
+        UserDefaults.standard.set(language, forKey: "scriptron.appLanguage")
+        status = language == "zh" ? "Language set to Chinese" : "Language set to English"
+    }
+
+    func factoryResetAppState() {
+        do {
+            try bridge.callVoid("factory_reset_app_state")
+            UserDefaults.standard.set("en", forKey: "scriptron.appLanguage")
+            appLanguage = "en"
+            refreshFiles()
+            loadWorkspaceManagementData()
+            loadMemorySnapshot()
+            status = "Factory settings restored"
+        } catch {
+            errorMessage = error.localizedDescription
+            status = "Factory reset failed"
+        }
+    }
+
+    func tr(_ english: String, _ chinese: String) -> String {
+        appLanguage == "zh" ? chinese : english
+    }
+
+    func workspacePanelTitle(_ panel: WorkspacePanel) -> String {
+        switch panel {
+        case .allProjects: tr("All Projects", "所有项目")
+        case .archived: tr("Archived", "归档")
+        case .cliMarket: tr("CLI Market", "CLI 市场")
+        case .cliManagement: tr("CLI Management", "CLI 管理")
+        case .skillMarket: tr("Skill Market", "Skill 市场")
+        case .skillManagement: tr("Skill Management", "Skill 管理")
+        case .modelManagement: tr("Model Management", "模型管理")
+        case .settings: tr("Settings", "设置")
+        }
+    }
+
+    func runAdaptiveSkillTrace(skill: String) {
+        do {
+            let _: SkillRetryTrace = try bridge.call(
+                "run_adaptive_skill",
+                params: [
+                    "skill": skill,
+                    "input": ["requested_from": "Project Settings"],
+                    "max_retries": 3,
+                    "dry_run": true
+                ],
+                as: SkillRetryTrace.self
+            )
+            loadMemorySnapshot()
+            status = "Skill trace recorded"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func searchMentions(query: String) {
+        do {
+            updateFunctionRegistry()
+            mentionSearch = try bridge.call(
+                "search_mentions",
+                params: [
+                    "query": query,
+                    "project_path": activeProjectPath ?? workspacePath
+                ],
+                as: MentionSearchResult.self
+            )
+            status = "Mentions searched"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func updateFunctionRegistry() {
+        guard let rootPath = activeProjectPath, !rootPath.isEmpty else {
+            functionMentions = []
+            return
+        }
+        let rootURL = URL(fileURLWithPath: rootPath, isDirectory: true)
+        var mentions: [MentionItem] = []
+
+        if let activePath = selectedFile?.path {
+            mentions.append(contentsOf: Self.functionMentions(
+                in: activePath,
+                cells: Self.cells(from: documentBlocks),
+                rootURL: rootURL
+            ))
+        }
+
+        let manager = FileManager.default
+        if let enumerator = manager.enumerator(at: rootURL, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) {
+            for case let url as URL in enumerator where url.pathExtension.lowercased() == "tron" && url.path != selectedFile?.path {
+                let cells = (try? String(contentsOf: url, encoding: .utf8))
+                    .flatMap { Self.parseTronCellsForRegistry($0) } ?? []
+                mentions.append(contentsOf: Self.functionMentions(in: url.path, cells: cells, rootURL: rootURL))
+            }
+        }
+
+        functionMentions = mentions.sorted { $0.label.localizedCaseInsensitiveCompare($1.label) == .orderedAscending }
+        persistFunctionRegistry(rootURL: rootURL, mentions: functionMentions)
+    }
+
+    func selectMention(_ item: MentionItem, module: MentionModule? = nil) {
+        selectedMentions.append(item)
+        do {
+            var reference: [String: Any] = [
+                "kind": item.kind,
+                "target": item.path,
+                "label": item.label,
+                "injection": module?.injection ?? (item.kind == "tron" ? "module_pending" : "attachment")
+            ]
+            if let module {
+                reference["module"] = module.name
+                reference["module_kind"] = module.kind
+            }
+            try bridge.callVoid("record_mention_reference", params: [
+                "reference": reference
+            ])
+            status = "Mention recorded"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     func openFile(_ file: FileEntry) {
-        guard file.is_tron else { return }
+        if file.is_dir {
+            toggleFolder(file)
+            return
+        }
+        if activeTabPath != file.path {
+            stashActiveTabState()
+        }
+        if !file.is_tron {
+            openExternalFile(file)
+            return
+        }
+        if let cached = tronTabStates[file.path] {
+            selectedFile = cached.file
+            openedFile = nil
+            registerOpenTab(file)
+            draftCells = cached.draftCells
+            documentBlocks = cached.documentBlocks
+            selectedDocumentBlockIDs = []
+            lastSelectedDocumentBlockID = nil
+            updateFunctionRegistry()
+            isDirty = cached.dirty
+            screen = .project(.explorer)
+            status = "Opened \(file.name)"
+            return
+        }
         do {
             selectedFile = try bridge.call("open_tron_file", params: ["path": file.path], as: TronFile.self)
+            openedFile = nil
+            registerOpenTab(file)
             draftCells = selectedFile?.cells ?? []
             documentBlocks = Self.documentBlocks(from: draftCells)
+            selectedDocumentBlockIDs = []
+            lastSelectedDocumentBlockID = nil
+            updateFunctionRegistry()
             isDirty = false
             screen = .project(.explorer)
             status = "Opened \(file.name)"
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    func activateTab(_ tab: FileEntry) {
+        openFile(tab)
+    }
+
+    func closeTab(_ tab: FileEntry) {
+        closeTab(tab, discardChanges: false)
+    }
+
+    func closeTab(_ tab: FileEntry, discardChanges: Bool) {
+        guard let index = openTabs.firstIndex(where: { $0.path == tab.path }) else { return }
+        guard discardChanges || !isTabDirty(tab) else { return }
+        let wasActive = activeTabPath == tab.path
+        openTabs.remove(at: index)
+        externalTabStates.removeValue(forKey: tab.path)
+        tronTabStates.removeValue(forKey: tab.path)
+        dirtyTabPaths.remove(tab.path)
+
+        guard wasActive else { return }
+        if openTabs.isEmpty {
+            activeTabPath = nil
+            selectedFile = nil
+            openedFile = nil
+            draftCells = []
+            documentBlocks = []
+            isDirty = false
+            status = "No file open"
+            return
+        }
+
+        let nextIndex = min(index, openTabs.count - 1)
+        openFile(openTabs[nextIndex])
+    }
+
+    private func registerOpenTab(_ file: FileEntry) {
+        if !openTabs.contains(where: { $0.path == file.path }) {
+            openTabs.append(file)
+        }
+        activeTabPath = file.path
+    }
+
+    func isTabDirty(_ tab: FileEntry) -> Bool {
+        dirtyTabPaths.contains(tab.path)
+    }
+
+    private func stashActiveTabState() {
+        guard let path = activeTabPath else { return }
+        if let openedFile {
+            externalTabStates[path] = ExternalTabState(file: openedFile, dirty: isDirty)
+        } else if let selectedFile {
+            tronTabStates[path] = TronTabState(
+                file: selectedFile,
+                draftCells: draftCells,
+                documentBlocks: documentBlocks,
+                dirty: isDirty
+            )
+        }
+
+        if isDirty {
+            dirtyTabPaths.insert(path)
+        } else {
+            dirtyTabPaths.remove(path)
+        }
+    }
+
+    private func markActiveTabDirty() {
+        isDirty = true
+        if let activeTabPath {
+            dirtyTabPaths.insert(activeTabPath)
+        }
+    }
+
+    private func clearActiveTabDirty() {
+        isDirty = false
+        if let activeTabPath {
+            dirtyTabPaths.remove(activeTabPath)
+        }
+    }
+
+    func toggleFolder(_ folder: FileEntry) {
+        guard folder.is_dir else { return }
+        if expandedFolders.contains(folder.path) {
+            expandedFolders.remove(folder.path)
+        } else {
+            expandedFolders.insert(folder.path)
+            loadChildren(for: folder.path)
+        }
+    }
+
+    func loadChildren(for folderPath: String) {
+        do {
+            folderChildren[folderPath] = try bridge.call("list_dir_files", params: ["path": folderPath], as: [FileEntry].self)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func beginDraggingFile(_ path: String) {
+        draggedFilePath = path
+        dropHoverFolderPath = nil
+    }
+
+    func hoverDropFolder(_ path: String?) {
+        dropHoverFolderPath = path
+    }
+
+    func endDraggingFile() {
+        draggedFilePath = nil
+        dropHoverFolderPath = nil
+    }
+
+    func finishDropInteraction() {
+        dropHoverFolderPath = nil
+    }
+
+    func updateOpenedFileContent(_ content: String) {
+        openedFile?.content = content
+        markActiveTabDirty()
     }
 
     func createScript(named rawName: String) {
@@ -285,12 +920,15 @@ final class AppModel: ObservableObject {
 
         do {
             try FileManager.default.moveItem(at: sourceURL, to: targetURL)
-            if selectedFile?.path == file.path {
+            if selectedFile?.path == file.path || openedFile?.path == file.path {
                 selectedFile = nil
+                openedFile = nil
                 draftCells = []
                 documentBlocks = []
                 isDirty = false
             }
+            openTabs.removeAll { $0.path == file.path }
+            if activeTabPath == file.path { activeTabPath = nil }
             refreshFiles()
             status = "Renamed to \(targetURL.lastPathComponent)"
         } catch {
@@ -302,11 +940,16 @@ final class AppModel: ObservableObject {
     func deleteFile(_ file: FileEntry) {
         do {
             try FileManager.default.removeItem(at: URL(fileURLWithPath: file.path))
-            if selectedFile?.path == file.path {
+            if selectedFile?.path == file.path || openedFile?.path == file.path {
                 selectedFile = nil
+                openedFile = nil
                 draftCells = []
                 documentBlocks = []
                 isDirty = false
+            }
+            openTabs.removeAll { $0.path == file.path || $0.path.hasPrefix(file.path + "/") }
+            if activeTabPath == file.path || activeTabPath?.hasPrefix(file.path + "/") == true {
+                activeTabPath = nil
             }
             refreshFiles()
             status = "Deleted \(file.name)"
@@ -344,6 +987,8 @@ final class AppModel: ObservableObject {
             }
             refreshFiles()
             selectedFile = nil
+            openedFile = nil
+            activeTabPath = nil
             draftCells = []
             documentBlocks = []
             isDirty = false
@@ -355,7 +1000,7 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func copyDroppedFiles(_ providers: [NSItemProvider]) -> Bool {
+    func copyDroppedFiles(_ providers: [NSItemProvider], to targetDirectoryPath: String? = nil) -> Bool {
         guard !providers.isEmpty else { return false }
         status = "Copying dropped files..."
 
@@ -370,7 +1015,80 @@ final class AppModel: ObservableObject {
                 }
 
                 Task { @MainActor in
-                    self?.copyDroppedFile(from: sourceURL)
+                    self?.copyDroppedFile(from: sourceURL, to: targetDirectoryPath)
+                }
+            }
+        }
+
+        return true
+    }
+
+    func moveDroppedFiles(_ providers: [NSItemProvider], to targetDirectoryPath: String? = nil) -> Bool {
+        guard !providers.isEmpty else { return false }
+        status = "Moving dropped files..."
+
+        for provider in providers {
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { [weak self] item, error in
+                guard let sourceURL = Self.fileURL(from: item), error == nil else {
+                    Task { @MainActor in
+                        self?.errorMessage = error?.localizedDescription ?? "Could not read dragged file."
+                        self?.status = "Move failed"
+                        self?.endDraggingFile()
+                    }
+                    return
+                }
+
+                Task { @MainActor in
+                    self?.moveDroppedFile(from: sourceURL, to: targetDirectoryPath)
+                }
+            }
+        }
+
+        return true
+    }
+
+    func moveInternalDroppedFiles(_ providers: [NSItemProvider], to targetDirectoryPath: String? = nil) -> Bool {
+        guard !providers.isEmpty else { return false }
+        status = "Moving files..."
+
+        for provider in providers {
+            provider.loadDataRepresentation(forTypeIdentifier: UTType.scriptronFilePath.identifier) { [weak self] data, error in
+                guard let data,
+                      let path = String(data: data, encoding: .utf8),
+                      error == nil else {
+                    Task { @MainActor in
+                        self?.errorMessage = error?.localizedDescription ?? "Could not read dragged file."
+                        self?.status = "Move failed"
+                    }
+                    return
+                }
+
+                Task { @MainActor in
+                    self?.moveDroppedFile(from: URL(fileURLWithPath: path), to: targetDirectoryPath)
+                }
+            }
+        }
+
+        return true
+    }
+
+    func moveTextDroppedFiles(_ providers: [NSItemProvider], to targetDirectoryPath: String? = nil) -> Bool {
+        guard !providers.isEmpty else { return false }
+        status = "Moving files..."
+
+        for provider in providers {
+            provider.loadItem(forTypeIdentifier: UTType.text.identifier, options: nil) { [weak self] item, error in
+                guard let path = Self.string(from: item), error == nil else {
+                    Task { @MainActor in
+                        self?.errorMessage = error?.localizedDescription ?? "Could not read dragged file."
+                        self?.status = "Move failed"
+                        self?.endDraggingFile()
+                    }
+                    return
+                }
+
+                Task { @MainActor in
+                    self?.moveDroppedFile(from: URL(fileURLWithPath: path), to: targetDirectoryPath)
                 }
             }
         }
@@ -381,13 +1099,22 @@ final class AppModel: ObservableObject {
     func updateCell(_ cell: TronCell, content: String) {
         guard let index = draftCells.firstIndex(where: { $0.id == cell.id }) else { return }
         draftCells[index].content = content
-        isDirty = true
+        markActiveTabDirty()
     }
 
     func updateDocumentBlock(_ block: DocumentBlock, content: String) {
         guard let index = documentBlocks.firstIndex(where: { $0.id == block.id }) else { return }
         documentBlocks[index].content = content
-        isDirty = true
+        ensureTrailingBlankLine()
+        markActiveTabDirty()
+        updateFunctionRegistry()
+    }
+
+    func updateRunBlockName(_ block: DocumentBlock, name: String) {
+        guard let index = documentBlocks.firstIndex(where: { $0.id == block.id }) else { return }
+        documentBlocks[index].name = sanitizedFunctionName(name)
+        markActiveTabDirty()
+        updateFunctionRegistry()
     }
 
     func insertDocumentBlock(after block: DocumentBlock?, kind: DocumentBlockKind) {
@@ -405,72 +1132,198 @@ final class AppModel: ObservableObject {
     }
 
     func insertDivider(after block: DocumentBlock?) {
-        insertDocumentBlocks([DocumentBlock(kind: .markdownLine, content: "---")], after: block)
+        insertDocumentBlocks([DocumentBlock(kind: .divider, content: "")], after: block)
+    }
+
+    func convertBlock(_ block: DocumentBlock, to kind: DocumentBlockKind) {
+        guard let index = documentBlocks.firstIndex(where: { $0.id == block.id }) else { return }
+        documentBlocks[index].kind = kind
+        if documentBlocks[index].content.isEmpty {
+            documentBlocks[index].content = defaultContent(for: kind)
+        }
+        markActiveTabDirty()
     }
 
     func setHeading(_ block: DocumentBlock, level: Int) {
-        guard block.kind == .markdownLine else { return }
-        let clean = block.content
-            .replacingOccurrences(of: #"^#{1,6}\s+"#, with: "", options: .regularExpression)
-            .trimmingCharacters(in: .whitespaces)
-        updateDocumentBlock(block, content: "\(String(repeating: "#", count: max(1, min(level, 3)))) \(clean)")
+        guard let index = documentBlocks.firstIndex(where: { $0.id == block.id }) else { return }
+        documentBlocks[index].kind = .heading(max(1, min(level, 3)))
+        documentBlocks[index].content = cleanMarkdownPrefix(documentBlocks[index].content)
+        markActiveTabDirty()
     }
 
     func toggleOrderedList(_ block: DocumentBlock) {
-        guard block.kind == .markdownLine else { return }
-        let clean = block.content
-            .replacingOccurrences(of: #"^\d+\.\s+"#, with: "", options: .regularExpression)
-            .trimmingCharacters(in: .whitespaces)
-        updateDocumentBlock(block, content: "1. \(clean)")
+        guard let index = documentBlocks.firstIndex(where: { $0.id == block.id }) else { return }
+        documentBlocks[index].kind = .list(true)
+        documentBlocks[index].content = listBody(from: documentBlocks[index].content, ordered: true)
+        markActiveTabDirty()
     }
 
     func toggleBulletList(_ block: DocumentBlock) {
-        guard block.kind == .markdownLine else { return }
-        let clean = block.content
-            .replacingOccurrences(of: #"^[-*]\s+"#, with: "", options: .regularExpression)
-            .trimmingCharacters(in: .whitespaces)
-        updateDocumentBlock(block, content: "- \(clean)")
+        guard let index = documentBlocks.firstIndex(where: { $0.id == block.id }) else { return }
+        documentBlocks[index].kind = .list(false)
+        documentBlocks[index].content = listBody(from: documentBlocks[index].content, ordered: false)
+        markActiveTabDirty()
     }
 
     private func insertDocumentBlocks(_ newBlocks: [DocumentBlock], after block: DocumentBlock?) {
         guard !newBlocks.isEmpty else { return }
         guard let block, let index = documentBlocks.firstIndex(where: { $0.id == block.id }) else {
             documentBlocks.insert(contentsOf: newBlocks, at: 0)
-            isDirty = true
+            ensureTrailingBlankLine()
+            markActiveTabDirty()
             return
         }
         documentBlocks.insert(contentsOf: newBlocks, at: documentBlocks.index(after: index))
-        isDirty = true
+        ensureTrailingBlankLine()
+        markActiveTabDirty()
     }
 
     func deleteDocumentBlock(_ block: DocumentBlock) {
-        guard documentBlocks.count > 1 else {
-            updateDocumentBlock(block, content: "")
+        documentBlocks.removeAll { $0.id == block.id }
+        selectedDocumentBlockIDs.remove(block.id)
+        ensureTrailingBlankLine()
+        markActiveTabDirty()
+        updateFunctionRegistry()
+    }
+
+    func selectDocumentBlock(_ block: DocumentBlock, toggling: Bool = false, extending: Bool = false) {
+        if extending,
+           let lastSelectedDocumentBlockID,
+           let start = documentBlocks.firstIndex(where: { $0.id == lastSelectedDocumentBlockID }),
+           let end = documentBlocks.firstIndex(where: { $0.id == block.id }) {
+            let range = start <= end ? start...end : end...start
+            selectedDocumentBlockIDs = Set(documentBlocks[range].map(\.id))
+        } else if toggling {
+            if selectedDocumentBlockIDs.contains(block.id) {
+                selectedDocumentBlockIDs.remove(block.id)
+            } else {
+                selectedDocumentBlockIDs.insert(block.id)
+            }
+            lastSelectedDocumentBlockID = block.id
+        } else {
+            selectedDocumentBlockIDs = [block.id]
+            lastSelectedDocumentBlockID = block.id
+        }
+    }
+
+    func clearDocumentBlockSelection() {
+        selectedDocumentBlockIDs = []
+        lastSelectedDocumentBlockID = nil
+    }
+
+    func deleteSelectedDocumentBlocks() {
+        guard !selectedDocumentBlockIDs.isEmpty else { return }
+        documentBlocks.removeAll { selectedDocumentBlockIDs.contains($0.id) }
+        selectedDocumentBlockIDs = []
+        lastSelectedDocumentBlockID = nil
+        ensureTrailingBlankLine()
+        markActiveTabDirty()
+        updateFunctionRegistry()
+        status = "Deleted selected blocks"
+    }
+
+    func deleteEmptyMarkdownBlockBefore(_ block: DocumentBlock) {
+        guard block.kind == .markdownLine,
+              block.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              let index = documentBlocks.firstIndex(where: { $0.id == block.id }),
+              index < documentBlocks.count - 1 || documentBlocks.count > 1 else {
             return
         }
-        documentBlocks.removeAll { $0.id == block.id }
-        isDirty = true
+        documentBlocks.remove(at: index)
+        selectedDocumentBlockIDs.remove(block.id)
+        ensureTrailingBlankLine()
+        markActiveTabDirty()
+    }
+
+    private func ensureTrailingBlankLine() {
+        while documentBlocks.count > 1,
+              let last = documentBlocks.last,
+              let previous = documentBlocks.dropLast().last,
+              last.kind == .markdownLine,
+              previous.kind == .markdownLine,
+              last.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              previous.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            documentBlocks.removeLast()
+        }
+        guard let last = documentBlocks.last else {
+            documentBlocks = [DocumentBlock(kind: .markdownLine, content: "")]
+            return
+        }
+        if last.kind != .markdownLine || !last.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            documentBlocks.append(DocumentBlock(kind: .markdownLine, content: ""))
+        }
+    }
+
+    func insertMarkdownLine(after block: DocumentBlock, content: String = "") {
+        insertDocumentBlocks([DocumentBlock(kind: .markdownLine, content: content)], after: block)
+    }
+
+    func continueMarkdownLine(after block: DocumentBlock) {
+        insertMarkdownLine(after: block)
+    }
+
+    func continueListBlock(after block: DocumentBlock, ordered: Bool) {
+        guard let index = documentBlocks.firstIndex(where: { $0.id == block.id }) else { return }
+        var lines = documentBlocks[index].content.components(separatedBy: .newlines)
+        if lines.isEmpty { lines = [""] }
+        if lines.last?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false {
+            lines.append("")
+        }
+        documentBlocks[index].content = lines.joined(separator: "\n")
+        markActiveTabDirty()
     }
 
     func generateMarkdown(from block: DocumentBlock) {
-        let markdown = Self.markdownFromNaturalLanguage(block.content)
-        let lines = Self.markdownLineBlocks(from: markdown)
         guard let index = documentBlocks.firstIndex(where: { $0.id == block.id }) else { return }
-        documentBlocks.remove(at: index)
-        documentBlocks.insert(contentsOf: lines, at: index)
-        isDirty = true
-        status = "Generated markdown"
+        let prompt = block.content
+        let bridge = bridge
+        let projectPath = projectRootPath
+        status = "Generating markdown"
+        Task.detached(priority: .userInitiated) {
+            let request = """
+            You are Troner's Gen Cell. Convert the user's natural language description into clean Markdown only.
+            Return only Markdown. Include editable markdown tables when useful. Do not wrap the result in code fences.
+
+            User request:
+            \(prompt)
+            """
+            let markdown: String
+            do {
+                markdown = try bridge.call(
+                    "troner_agent_message",
+                    params: ["message": request, "project_path": projectPath],
+                    as: String.self
+                )
+            } catch {
+                markdown = Self.markdownFromNaturalLanguage(prompt)
+            }
+            await MainActor.run {
+                guard self.documentBlocks.indices.contains(index), self.documentBlocks[index].id == block.id else { return }
+                let lines = Self.markdownLineBlocks(from: markdown)
+                self.documentBlocks.remove(at: index)
+                self.documentBlocks.insert(contentsOf: lines, at: index)
+                self.ensureTrailingBlankLine()
+                self.markActiveTabDirty()
+                self.status = "Generated markdown"
+            }
+        }
     }
 
     private func defaultContent(for kind: DocumentBlockKind) -> String {
         switch kind {
         case .markdownLine: ""
+        case .heading: "Heading"
+        case .list: "List item"
         case .table:
             """
             | Column 1 | Column 2 | Column 3 |
             | --- | --- | --- |
             |  |  |  |
             """
+        case .quote: "Quote"
+        case .code: ""
+        case .checklist: "Todo"
+        case .divider: ""
         case .run: ""
         case .gen: ""
         }
@@ -479,34 +1332,34 @@ final class AppModel: ObservableObject {
     func toggleCell(_ cell: TronCell) {
         guard let index = draftCells.firstIndex(where: { $0.id == cell.id }) else { return }
         draftCells[index].run.toggle()
-        isDirty = true
+        markActiveTabDirty()
     }
 
     func addCell(run: Bool) {
         draftCells.append(TronCell(run: run, content: ""))
-        isDirty = true
+        markActiveTabDirty()
     }
 
     func insertCell(after cell: TronCell?, run: Bool) {
         let newCell = TronCell(run: run, content: "")
         guard let cell, let index = draftCells.firstIndex(where: { $0.id == cell.id }) else {
             draftCells.insert(newCell, at: 0)
-            isDirty = true
+            markActiveTabDirty()
             return
         }
         draftCells.insert(newCell, at: draftCells.index(after: index))
-        isDirty = true
+        markActiveTabDirty()
     }
 
     func insertGenCell(after cell: TronCell?) {
         let newCell = TronCell(run: true, content: "\(Self.genCellPrefix)\n")
         guard let cell, let index = draftCells.firstIndex(where: { $0.id == cell.id }) else {
             draftCells.insert(newCell, at: 0)
-            isDirty = true
+            markActiveTabDirty()
             return
         }
         draftCells.insert(newCell, at: draftCells.index(after: index))
-        isDirty = true
+        markActiveTabDirty()
     }
 
     func isGenCell(_ cell: TronCell) -> Bool {
@@ -527,17 +1380,32 @@ final class AppModel: ObservableObject {
         let markdown = Self.markdownFromNaturalLanguage(prompt)
         guard let index = draftCells.firstIndex(where: { $0.id == cell.id }) else { return }
         draftCells[index] = TronCell(run: false, content: markdown)
-        isDirty = true
+        markActiveTabDirty()
         status = "Generated markdown"
     }
 
     func deleteCell(_ cell: TronCell) {
         guard draftCells.count > 1 else { return }
         draftCells.removeAll { $0.id == cell.id }
-        isDirty = true
+        markActiveTabDirty()
     }
 
     func saveSelectedFile() {
+        if let file = openedFile {
+            do {
+                try file.content.write(to: URL(fileURLWithPath: file.path), atomically: true, encoding: .utf8)
+                openedFile = file
+                if let activeTabPath {
+                    externalTabStates[activeTabPath] = ExternalTabState(file: file, dirty: false)
+                }
+                clearActiveTabDirty()
+                status = "Saved \(file.name)"
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+            return
+        }
+
         guard let file = selectedFile else {
             errorMessage = "No script is open."
             return
@@ -551,7 +1419,16 @@ final class AppModel: ObservableObject {
             selectedFile = try bridge.call("open_tron_file", params: ["path": file.path], as: TronFile.self)
             draftCells = selectedFile?.cells ?? []
             documentBlocks = Self.documentBlocks(from: draftCells)
-            isDirty = false
+            updateFunctionRegistry()
+            if let activeTabPath, let selectedFile {
+                tronTabStates[activeTabPath] = TronTabState(
+                    file: selectedFile,
+                    draftCells: draftCells,
+                    documentBlocks: documentBlocks,
+                    dirty: false
+                )
+            }
+            clearActiveTabDirty()
             status = "Saved \(file.path.split(separator: "/").last ?? "script")"
         } catch {
             errorMessage = error.localizedDescription
@@ -559,16 +1436,120 @@ final class AppModel: ObservableObject {
     }
 
     func runPreview() {
-        do {
-            try bridge.callVoid("run_task_preview", params: [
-                "cells": Self.cells(from: documentBlocks).map { ["run": $0.run, "content": $0.content] },
-                "project_path": projectRootPath
-            ])
-            runEvents = try bridge.call("poll_events", as: [RunEvent].self)
-            status = "Run preview complete"
-        } catch {
-            errorMessage = error.localizedDescription
+        runPreview(block: nil)
+    }
+
+    func runPreview(block: DocumentBlock?) {
+        guard let file = selectedFile else {
+            errorMessage = "No .tron file is open."
+            return
         }
+        if let validationError = validateRunReferenceTree(startingAt: block) {
+            errorMessage = validationError
+            status = "Run validation failed"
+            return
+        }
+        isRunningTask = true
+        runEventsBlockID = block?.id
+        status = "Running task"
+        runEvents = []
+        let bridge = bridge
+        let taskCells = Self.cells(from: documentBlocks)
+        guard let cellsData = try? JSONEncoder().encode(taskCells),
+              let blackboardData = try? JSONSerialization.data(withJSONObject: file.blackboard.value) else {
+            errorMessage = "Could not encode task inputs."
+            status = "Run failed"
+            isRunningTask = false
+            return
+        }
+        let projectPath = projectRootPath
+        Task.detached(priority: .userInitiated) {
+            do {
+                let decodedCells = try JSONDecoder().decode([TronCell].self, from: cellsData)
+                let blackboard = try JSONSerialization.jsonObject(with: blackboardData)
+                try bridge.callVoid("run_task_preview", params: [
+                    "cells": decodedCells.map { ["run": $0.run, "content": $0.content] },
+                    "project_path": projectPath,
+                    "blackboard": blackboard
+                ])
+                let events = try bridge.call("poll_events", as: [RunEvent].self)
+                await MainActor.run {
+                    self.runEvents = events
+                    self.status = "Run complete"
+                    self.isRunningTask = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.errorMessage = error.localizedDescription
+                    self.status = "Run failed"
+                    self.isRunningTask = false
+                }
+            }
+        }
+    }
+
+    private func validateRunReferenceTree(startingAt block: DocumentBlock?) -> String? {
+        updateFunctionRegistry()
+        let graph = functionBodyMap()
+        let startNames: [String]
+        if let block, block.kind == .run {
+            let name = block.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            startNames = [name.isEmpty ? Self.fallbackFunctionName(from: block.content, index: 0) : name]
+        } else {
+            startNames = documentBlocks.compactMap { block in
+                guard block.kind == .run else { return nil }
+                let name = block.name.trimmingCharacters(in: .whitespacesAndNewlines)
+                return name.isEmpty ? Self.fallbackFunctionName(from: block.content, index: 0) : name
+            }
+        }
+
+        var visiting: [String] = []
+        var visited = Set<String>()
+
+        func visit(_ name: String, depth: Int) -> String? {
+            guard depth <= 5 else { return "Reference tree is deeper than 5 levels near \(name)." }
+            if visiting.contains(name) {
+                return "Circular run-cell reference detected: \((visiting + [name]).joined(separator: " -> "))"
+            }
+            guard let body = graph[name] else { return nil }
+            if visited.contains(name) { return nil }
+            visiting.append(name)
+            for reference in Self.extractFunctionReferences(from: body) {
+                if let error = visit(reference, depth: depth + 1) {
+                    return error
+                }
+            }
+            visiting.removeLast()
+            visited.insert(name)
+            return nil
+        }
+
+        for name in startNames {
+            if let error = visit(name, depth: 1) { return error }
+        }
+        return nil
+    }
+
+    private func functionBodyMap() -> [String: String] {
+        var graph: [String: String] = [:]
+        for (index, block) in documentBlocks.enumerated() where block.kind == .run {
+            let name = block.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            graph[name.isEmpty ? Self.fallbackFunctionName(from: block.content, index: index) : name] = block.content
+        }
+        guard let rootPath = activeProjectPath else { return graph }
+        let rootURL = URL(fileURLWithPath: rootPath, isDirectory: true)
+        if let enumerator = FileManager.default.enumerator(at: rootURL, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
+            for case let url as URL in enumerator where url.pathExtension.lowercased() == "tron" && url.path != selectedFile?.path {
+                let cells = (try? String(contentsOf: url, encoding: .utf8))
+                    .flatMap { Self.parseTronCellsForRegistry($0) } ?? []
+                for (index, cell) in cells.enumerated() where cell.run {
+                    let parsed = Self.parseRunCellContent(cell.content)
+                    let name = parsed.name.isEmpty ? Self.fallbackFunctionName(from: parsed.body, index: index) : parsed.name
+                    graph[name] = parsed.body
+                }
+            }
+        }
+        return graph
     }
 
     private func rebuildProjects() {
@@ -587,6 +1568,131 @@ final class AppModel: ObservableObject {
         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
+    private func openExternalFile(_ file: FileEntry) {
+        let url = URL(fileURLWithPath: file.path)
+        let viewer = Self.viewerKind(for: url.pathExtension)
+
+        guard viewer != .unsupported else {
+            errorMessage = "No viewer is installed for .\(url.pathExtension)."
+            status = "Unsupported file"
+            return
+        }
+
+        if let cached = externalTabStates[file.path] {
+            selectedFile = nil
+            draftCells = []
+            documentBlocks = []
+            openedFile = cached.file
+            registerOpenTab(file)
+            isDirty = cached.dirty
+            status = "Opened \(file.name)"
+            return
+        }
+
+        do {
+            let content: String
+            if viewer == .code || viewer == .text || viewer == .csv {
+                let data = try Data(contentsOf: url)
+                guard let decoded = String(data: data, encoding: .utf8) ?? String(data: data, encoding: .utf16) else {
+                    errorMessage = "Could not decode \(file.name) as text."
+                    status = "Open failed"
+                    return
+                }
+                content = decoded
+            } else {
+                content = ""
+            }
+            selectedFile = nil
+            draftCells = []
+            documentBlocks = []
+            openedFile = OpenedFile(
+                name: file.name,
+                path: file.path,
+                content: content,
+                viewer: viewer,
+                language: Self.languageName(for: url.pathExtension)
+            )
+            registerOpenTab(file)
+            isDirty = false
+            status = "Opened \(file.name)"
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    private func reloadExpandedFolders() {
+        let expanded = expandedFolders
+        for path in expanded {
+            loadChildren(for: path)
+        }
+    }
+
+    private static func viewerKind(for ext: String) -> ViewerKind {
+        let normalized = ext.lowercased()
+        if normalized == "csv" { return .csv }
+        if normalized == "pdf" { return .pdf }
+        if wordExtensions.contains(normalized) { return .word }
+        if excelExtensions.contains(normalized) { return .excel }
+        if quickLookExtensions.contains(normalized) { return .quickLook }
+        if codeExtensions.contains(normalized) { return .code }
+        if textExtensions.contains(normalized) { return .text }
+        return .unsupported
+    }
+
+    private static func languageName(for ext: String) -> String {
+        switch ext.lowercased() {
+        case "swift": "Swift"
+        case "rs": "Rust"
+        case "js", "jsx": "JavaScript"
+        case "ts", "tsx": "TypeScript"
+        case "py": "Python"
+        case "go": "Go"
+        case "java": "Java"
+        case "kt", "kts": "Kotlin"
+        case "c", "h": "C"
+        case "cpp", "cc", "cxx", "hpp": "C++"
+        case "cs": "C#"
+        case "rb": "Ruby"
+        case "php": "PHP"
+        case "html": "HTML"
+        case "css": "CSS"
+        case "json": "JSON"
+        case "md", "markdown": "Markdown"
+        case "toml": "TOML"
+        case "yaml", "yml": "YAML"
+        case "sh", "bash", "zsh": "Shell"
+        case "sql": "SQL"
+        case "csv": "CSV"
+        case "pdf": "PDF"
+        case "doc", "docx": "Word"
+        case "xls", "xlsx": "Excel"
+        default: ext.uppercased()
+        }
+    }
+
+    private static let codeExtensions: Set<String> = [
+        "swift", "rs", "js", "jsx", "ts", "tsx", "py", "go", "java", "kt", "kts",
+        "c", "h", "cpp", "cc", "cxx", "hpp", "cs", "rb", "php", "html", "css",
+        "json", "toml", "yaml", "yml", "sh", "bash", "zsh", "sql", "xml", "vue",
+        "svelte", "dart", "scala", "lua", "r", "m", "mm"
+    ]
+
+    private static let textExtensions: Set<String> = [
+        "txt", "md", "markdown", "log", "env", "gitignore", "csv", "tsv"
+    ]
+
+    private static let wordExtensions: Set<String> = [
+        "doc", "docx", "rtf", "pages"
+    ]
+
+    private static let excelExtensions: Set<String> = [
+        "xls", "xlsx", "numbers"
+    ]
+
+    private static let quickLookExtensions: Set<String> = [
+        "ppt", "pptx", "key", "png", "jpg", "jpeg", "gif", "heic", "webp", "svg"
+    ]
+
     private func updateProject(_ project: ProjectItem, mutate: (inout ProjectItem) -> Void) {
         guard let index = projects.firstIndex(where: { $0.id == project.id }) else { return }
         mutate(&projects[index])
@@ -594,17 +1700,22 @@ final class AppModel: ObservableObject {
     }
 
     private static let genCellPrefix = "[[scriptron:gen-markdown]]"
+    private static let runNamePrefix = "[[scriptron:run-name]]"
 
     private static func documentBlocks(from cells: [TronCell]) -> [DocumentBlock] {
-        let blocks = cells.flatMap { cell -> [DocumentBlock] in
+        var blocks = cells.flatMap { cell -> [DocumentBlock] in
             if cell.run && cell.content.hasPrefix(genCellPrefix) {
                 let prompt = String(cell.content.dropFirst(genCellPrefix.count)).trimmingCharacters(in: .newlines)
                 return [DocumentBlock(kind: .gen, content: prompt)]
             }
             if cell.run {
-                return [DocumentBlock(kind: .run, content: cell.content)]
+                let parsed = parseRunCellContent(cell.content)
+                return [DocumentBlock(kind: .run, content: parsed.body, name: parsed.name)]
             }
             return markdownLineBlocks(from: cell.content)
+        }
+        if blocks.last?.kind != .markdownLine || !(blocks.last?.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? false) {
+            blocks.append(DocumentBlock(kind: .markdownLine, content: ""))
         }
         return blocks
     }
@@ -615,7 +1726,47 @@ final class AppModel: ObservableObject {
         var index = 0
 
         while index < lines.count {
-            if index + 1 < lines.count, isMarkdownTableSeparator(lines[index + 1]), lines[index].contains("|") {
+            let trimmed = lines[index].trimmingCharacters(in: .whitespaces)
+            if trimmed == "---" {
+                blocks.append(DocumentBlock(kind: .divider, content: ""))
+                index += 1
+            } else if trimmed.hasPrefix("```") {
+                var codeLines: [String] = []
+                index += 1
+                while index < lines.count, !lines[index].trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                    codeLines.append(lines[index])
+                    index += 1
+                }
+                if index < lines.count { index += 1 }
+                blocks.append(DocumentBlock(kind: .code, content: codeLines.joined(separator: "\n")))
+            } else if let heading = parseHeading(trimmed) {
+                blocks.append(DocumentBlock(kind: .heading(heading.level), content: heading.text))
+                index += 1
+            } else if isChecklistLine(trimmed) {
+                var itemLines: [String] = []
+                while index < lines.count, isChecklistLine(lines[index].trimmingCharacters(in: .whitespaces)) {
+                    itemLines.append(cleanChecklistLine(lines[index]))
+                    index += 1
+                }
+                blocks.append(DocumentBlock(kind: .checklist, content: itemLines.joined(separator: "\n")))
+            } else if isOrderedListLine(trimmed) || isBulletListLine(trimmed) {
+                let ordered = isOrderedListLine(trimmed)
+                var itemLines: [String] = []
+                while index < lines.count {
+                    let current = lines[index].trimmingCharacters(in: .whitespaces)
+                    guard ordered ? isOrderedListLine(current) : isBulletListLine(current) else { break }
+                    itemLines.append(cleanListLine(current))
+                    index += 1
+                }
+                blocks.append(DocumentBlock(kind: .list(ordered), content: itemLines.joined(separator: "\n")))
+            } else if trimmed.hasPrefix(">") {
+                var quoteLines: [String] = []
+                while index < lines.count, lines[index].trimmingCharacters(in: .whitespaces).hasPrefix(">") {
+                    quoteLines.append(lines[index].replacingOccurrences(of: #"^\s*>\s?"#, with: "", options: .regularExpression))
+                    index += 1
+                }
+                blocks.append(DocumentBlock(kind: .quote, content: quoteLines.joined(separator: "\n")))
+            } else if index + 1 < lines.count, isMarkdownTableSeparator(lines[index + 1]), lines[index].contains("|") {
                 var tableLines = [lines[index], lines[index + 1]]
                 index += 2
                 while index < lines.count, lines[index].contains("|"), !lines[index].trimmingCharacters(in: .whitespaces).isEmpty {
@@ -640,11 +1791,56 @@ final class AppModel: ObservableObject {
         return stripped.isEmpty && line.contains("-")
     }
 
+    private static func parseHeading(_ line: String) -> (level: Int, text: String)? {
+        guard let range = line.range(of: #"^#{1,6}\s+"#, options: .regularExpression) else { return nil }
+        let marker = String(line[range]).trimmingCharacters(in: .whitespaces)
+        let text = String(line[range.upperBound...]).trimmingCharacters(in: .whitespaces)
+        return (min(marker.count, 3), text)
+    }
+
+    private static func isOrderedListLine(_ line: String) -> Bool {
+        line.range(of: #"^\d+\.\s+"#, options: .regularExpression) != nil
+    }
+
+    private static func isBulletListLine(_ line: String) -> Bool {
+        line.range(of: #"^[-*]\s+"#, options: .regularExpression) != nil
+    }
+
+    private static func isChecklistLine(_ line: String) -> Bool {
+        line.range(of: #"^[-*]\s+\[[ xX]\]\s+"#, options: .regularExpression) != nil
+    }
+
+    private static func cleanListLine(_ line: String) -> String {
+        line
+            .replacingOccurrences(of: #"^\d+\.\s+"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"^[-*]\s+"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+    }
+
+    private static func cleanChecklistLine(_ line: String) -> String {
+        line
+            .replacingOccurrences(of: #"^\s*[-*]\s+"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+    }
+
+    private static func parseRunCellContent(_ content: String) -> (name: String, body: String) {
+        var lines = content.components(separatedBy: .newlines)
+        guard let first = lines.first, first.hasPrefix(runNamePrefix) else {
+            return ("", content)
+        }
+        let name = String(first.dropFirst(runNamePrefix.count)).trimmingCharacters(in: .whitespaces)
+        lines.removeFirst()
+        return (name, lines.joined(separator: "\n").trimmingCharacters(in: .newlines))
+    }
+
     private static func cells(from blocks: [DocumentBlock]) -> [TronCell] {
         var cells: [TronCell] = []
         var markdownBuffer: [String] = []
 
         func flushMarkdown() {
+            while markdownBuffer.last?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == true {
+                markdownBuffer.removeLast()
+            }
             guard !markdownBuffer.isEmpty else { return }
             cells.append(TronCell(run: false, content: markdownBuffer.joined(separator: "\n")))
             markdownBuffer.removeAll()
@@ -654,11 +1850,29 @@ final class AppModel: ObservableObject {
             switch block.kind {
             case .markdownLine:
                 markdownBuffer.append(block.content)
+            case .heading(let level):
+                markdownBuffer.append("\(String(repeating: "#", count: max(1, min(level, 3)))) \(block.content)")
+            case .list(let ordered):
+                for (index, line) in block.content.components(separatedBy: .newlines).enumerated() {
+                    markdownBuffer.append(ordered ? "\(index + 1). \(line)" : "- \(line)")
+                }
             case .table:
                 markdownBuffer.append(block.content)
+            case .quote:
+                markdownBuffer.append(block.content.components(separatedBy: .newlines).map { "> \($0)" }.joined(separator: "\n"))
+            case .code:
+                markdownBuffer.append("```\n\(block.content)\n```")
+            case .checklist:
+                for line in block.content.components(separatedBy: .newlines) {
+                    let trimmed = line.trimmingCharacters(in: .whitespaces)
+                    markdownBuffer.append(trimmed.hasPrefix("[") ? "- \(trimmed)" : "- [ ] \(line)")
+                }
+            case .divider:
+                markdownBuffer.append("---")
             case .run:
                 flushMarkdown()
-                cells.append(TronCell(run: true, content: block.content))
+                let prefix = block.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "" : "\(runNamePrefix) \(block.name)\n"
+                cells.append(TronCell(run: true, content: "\(prefix)\(block.content)"))
             case .gen:
                 flushMarkdown()
                 cells.append(TronCell(run: true, content: "\(genCellPrefix)\n\(block.content)"))
@@ -669,7 +1883,7 @@ final class AppModel: ObservableObject {
         return cells
     }
 
-    private static func markdownFromNaturalLanguage(_ prompt: String) -> String {
+    nonisolated private static func markdownFromNaturalLanguage(_ prompt: String) -> String {
         let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
         let title = titleFromPrompt(trimmed)
 
@@ -696,7 +1910,7 @@ final class AppModel: ObservableObject {
         """
     }
 
-    private static func titleFromPrompt(_ prompt: String) -> String {
+    nonisolated private static func titleFromPrompt(_ prompt: String) -> String {
         guard !prompt.isEmpty else { return "Untitled" }
         if let dashRange = prompt.range(of: " - ") {
             return String(prompt[..<dashRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
@@ -715,6 +1929,27 @@ final class AppModel: ObservableObject {
             .filter { $0.isLetter || $0.isNumber || $0 == "-" || $0 == "_" }
     }
 
+    private func sanitizedFunctionName(_ rawName: String) -> String {
+        let trimmed = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "" : trimmed
+    }
+
+    private func cleanMarkdownPrefix(_ text: String) -> String {
+        text
+            .replacingOccurrences(of: #"^#{1,6}\s+"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"^\d+\.\s+"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"^[-*]\s+"#, with: "", options: .regularExpression)
+            .replacingOccurrences(of: #"^>\s+"#, with: "", options: .regularExpression)
+            .trimmingCharacters(in: .whitespaces)
+    }
+
+    private func listBody(from text: String, ordered: Bool) -> String {
+        let lines = text.components(separatedBy: .newlines)
+            .map { cleanMarkdownPrefix($0) }
+            .filter { !$0.isEmpty }
+        return (lines.isEmpty ? ["List item"] : lines).joined(separator: "\n")
+    }
+
     private func fileNameForCreation(baseName: String, fileExtension: String) -> String {
         let sanitizedBaseName = sanitizedPathComponent(baseName)
         let suffix = ".\(fileExtension)"
@@ -724,6 +1959,83 @@ final class AppModel: ObservableObject {
         return "\(sanitizedBaseName)\(suffix)"
     }
 
+    private func persistFunctionRegistry(rootURL: URL, mentions: [MentionItem]) {
+        let payload = mentions.map { item in
+            [
+                "id": item.id,
+                "label": item.label,
+                "kind": item.kind,
+                "path": item.path,
+                "detail": item.detail
+            ]
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]) else { return }
+        try? data.write(to: rootURL.appendingPathComponent(".troner-functions.json"))
+    }
+
+    private static func functionMentions(in path: String, cells: [TronCell], rootURL: URL) -> [MentionItem] {
+        let relativePath = URL(fileURLWithPath: path).path.replacingOccurrences(of: rootURL.path + "/", with: "")
+        return cells.enumerated().compactMap { index, cell in
+            guard cell.run, !cell.content.hasPrefix(genCellPrefix) else { return nil }
+            let parsed = parseRunCellContent(cell.content)
+            let name = parsed.name.isEmpty ? fallbackFunctionName(from: parsed.body, index: index) : parsed.name
+            return MentionItem(
+                id: "function:\(path)#\(name)",
+                label: name,
+                kind: "function",
+                path: path,
+                detail: "\(relativePath) · run cell",
+                installed: true,
+                modules: [
+                    MentionModule(name: name, kind: "executable", injection: "function_call")
+                ]
+            )
+        }
+    }
+
+    private static func fallbackFunctionName(from content: String, index: Int) -> String {
+        content.components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .first { !$0.isEmpty }
+            .map { String($0.prefix(40)) } ?? "run_\(index + 1)"
+    }
+
+    private static func parseTronCellsForRegistry(_ source: String) -> [TronCell] {
+        let lines = source.components(separatedBy: .newlines)
+        var cells: [TronCell] = []
+        var index = 0
+        while index < lines.count {
+            let header = lines[index].trimmingCharacters(in: .whitespaces)
+            guard header.hasPrefix("---run:") else {
+                index += 1
+                continue
+            }
+            let run = header.contains("true")
+            index += 1
+            var body: [String] = []
+            while index < lines.count, lines[index].trimmingCharacters(in: .whitespaces) != "---" {
+                body.append(lines[index])
+                index += 1
+            }
+            cells.append(TronCell(run: run, content: body.joined(separator: "\n").trimmingCharacters(in: .newlines)))
+            index += 1
+        }
+        return cells
+    }
+
+    private static func extractFunctionReferences(from content: String) -> [String] {
+        guard let regex = try? NSRegularExpression(pattern: #"@([\p{L}\p{N}_ .-]+)"#) else { return [] }
+        let nsRange = NSRange(content.startIndex..<content.endIndex, in: content)
+        return regex.matches(in: content, range: nsRange).compactMap { match in
+            guard let range = Range(match.range(at: 1), in: content) else { return nil }
+            let raw = String(content[range])
+            let cleaned = raw
+                .components(separatedBy: "#").first?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return cleaned?.isEmpty == false ? cleaned : nil
+        }
+    }
+
     private func sanitizedPathComponent(_ rawName: String) -> String {
         rawName
             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -731,9 +2043,14 @@ final class AppModel: ObservableObject {
             .replacingOccurrences(of: ":", with: "-")
     }
 
-    private func copyDroppedFile(from sourceURL: URL) {
+    private func encodeJSONObject<T: Encodable>(_ value: T) throws -> Any {
+        let data = try JSONEncoder().encode(value)
+        return try JSONSerialization.jsonObject(with: data)
+    }
+
+    private func copyDroppedFile(from sourceURL: URL, to targetDirectoryPath: String? = nil) {
         let manager = FileManager.default
-        let targetDirectory = URL(fileURLWithPath: projectRootPath, isDirectory: true)
+        let targetDirectory = URL(fileURLWithPath: targetDirectoryPath ?? projectRootPath, isDirectory: true)
 
         do {
             try manager.createDirectory(at: targetDirectory, withIntermediateDirectories: true)
@@ -741,14 +2058,129 @@ final class AppModel: ObservableObject {
             try manager.copyItem(at: sourceURL, to: destinationURL)
             refreshFiles()
             status = "Copied \(destinationURL.lastPathComponent)"
+            endDraggingFile()
         } catch {
             errorMessage = error.localizedDescription
             status = "Copy failed"
+            endDraggingFile()
         }
+    }
+
+    private func moveDroppedFile(from sourceURL: URL, to targetDirectoryPath: String? = nil) {
+        let manager = FileManager.default
+        let targetDirectory = URL(fileURLWithPath: targetDirectoryPath ?? projectRootPath, isDirectory: true)
+        let source = sourceURL.standardizedFileURL
+        let target = targetDirectory.standardizedFileURL
+        let sourceParent = source.deletingLastPathComponent()
+
+        guard sourceParent.path != target.path else {
+            status = "Already in \(target.lastPathComponent)"
+            endDraggingFile()
+            return
+        }
+
+        if isDirectory(source), target.path.hasPrefix(source.path + "/") {
+            errorMessage = "A folder cannot be moved into itself."
+            status = "Move failed"
+            endDraggingFile()
+            return
+        }
+
+        do {
+            try manager.createDirectory(at: targetDirectory, withIntermediateDirectories: true)
+            let destinationURL = uniqueDestinationURL(for: sourceURL.lastPathComponent, in: targetDirectory)
+            guard sourceURL.standardizedFileURL != destinationURL.standardizedFileURL else { return }
+            try manager.moveItem(at: sourceURL, to: destinationURL)
+            if selectedFile?.path == sourceURL.path || openedFile?.path == sourceURL.path {
+            selectedFile = nil
+            openedFile = nil
+            activeTabPath = nil
+            draftCells = []
+                documentBlocks = []
+                isDirty = false
+            }
+            refreshFiles()
+            status = "Moved \(destinationURL.lastPathComponent)"
+            endDraggingFile()
+        } catch {
+            errorMessage = error.localizedDescription
+            status = "Move failed"
+            endDraggingFile()
+        }
+    }
+
+    private func isDirectory(_ url: URL) -> Bool {
+        var isDirectory: ObjCBool = false
+        return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
     }
 
     private func uniqueDestinationURL(for fileName: String, in directory: URL) -> URL {
         let manager = FileManager.default
+        let originalURL = directory.appendingPathComponent(fileName)
+        guard manager.fileExists(atPath: originalURL.path) else { return originalURL }
+
+        let baseName = originalURL.deletingPathExtension().lastPathComponent
+        let fileExtension = originalURL.pathExtension
+
+        for suffix in 2...999 {
+            let candidateName = fileExtension.isEmpty
+                ? "\(baseName) \(suffix)"
+                : "\(baseName) \(suffix).\(fileExtension)"
+            let candidateURL = directory.appendingPathComponent(candidateName)
+            if !manager.fileExists(atPath: candidateURL.path) {
+                return candidateURL
+            }
+        }
+
+        return directory.appendingPathComponent("\(UUID().uuidString)-\(fileName)")
+    }
+
+    private struct ZipImportResult: Sendable {
+        let projectName: String
+    }
+
+    nonisolated private static func importZipProject(from sourceURL: URL, intoWorkspaceAt workspacePath: String) throws -> ZipImportResult {
+        let source = sourceURL.standardizedFileURL
+        guard source.pathExtension.lowercased() == "zip" else {
+            throw zipImportError("Only .zip files can be imported as projects.")
+        }
+
+        let manager = FileManager.default
+        let workspaceURL = URL(fileURLWithPath: workspacePath, isDirectory: true)
+        try manager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
+
+        let baseName = source.deletingPathExtension().lastPathComponent
+        let directoryName = sanitizedProjectDirectoryName(baseName)
+        let projectURL = uniqueDestinationURL(for: directoryName, in: workspaceURL, fileManager: manager)
+        try manager.createDirectory(at: projectURL, withIntermediateDirectories: true)
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        process.arguments = ["-x", "-k", source.path, projectURL.path]
+        try process.run()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            try? manager.removeItem(at: projectURL)
+            throw zipImportError("Could not unzip \(source.lastPathComponent).")
+        }
+
+        return ZipImportResult(projectName: projectURL.lastPathComponent)
+    }
+
+    nonisolated private static func zipImportError(_ message: String) -> NSError {
+        NSError(domain: "ScripTron.ZipImport", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
+    }
+
+    nonisolated private static func sanitizedProjectDirectoryName(_ rawName: String) -> String {
+        let sanitized = rawName
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+        return sanitized.isEmpty ? "Imported Project" : sanitized
+    }
+
+    nonisolated private static func uniqueDestinationURL(for fileName: String, in directory: URL, fileManager manager: FileManager) -> URL {
         let originalURL = directory.appendingPathComponent(fileName)
         guard manager.fileExists(atPath: originalURL.path) else { return originalURL }
 
@@ -777,6 +2209,19 @@ final class AppModel: ObservableObject {
         }
         if let string = item as? String {
             return URL(string: string)
+        }
+        return nil
+    }
+
+    nonisolated private static func string(from item: NSSecureCoding?) -> String? {
+        if let string = item as? String {
+            return string
+        }
+        if let data = item as? Data {
+            return String(data: data, encoding: .utf8)
+        }
+        if let url = item as? URL {
+            return url.path
         }
         return nil
     }
