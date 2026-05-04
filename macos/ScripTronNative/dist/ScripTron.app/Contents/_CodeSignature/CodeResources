@@ -15,10 +15,10 @@
 		<dict>
 			<key>cdhash</key>
 			<data>
-			b5VliDeegwzFI6YXAm7fC3ifQDQ=
+			fq/iAciqH6bcAHF5i2yMyfKvD6k=
 			</data>
 			<key>requirement</key>
-			<string>cdhash H"6f956588379e830cc523a617026edf0b789f4034"</string>
+			<string>cdhash H"7eafe201c8aa1fa6dc0071798b6c8cc9f2af0fa9"</string>
 		</dict>
 		<key>Resources/bin/scriptron</key>
 		<dict>

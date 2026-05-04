@@ -599,18 +599,25 @@ private struct InstalledCliModelRow: View {
             }
             Spacer()
             HStack(spacing: 8) {
+                Button {
+                    model.runPluginInstallScript(kind: "model", name: manifest.name)
+                } label: {
+                    if isLoggingIn {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text(model.tr("Working…", "执行中…"))
+                        }
+                    } else {
+                        Label(model.tr("Install Deps", "安装依赖"), systemImage: "arrow.down.circle")
+                    }
+                }
+                .buttonStyle(ManagementButtonStyle())
+                .disabled(isLoggingIn)
                 if supportsLogin {
                     Button {
                         model.runPluginLogin(manifest.name)
                     } label: {
-                        if isLoggingIn {
-                            HStack(spacing: 6) {
-                                ProgressView().controlSize(.small)
-                                Text(model.tr("Logging in…", "登录中…"))
-                            }
-                        } else {
-                            Label(model.tr("Login", "登录"), systemImage: "person.crop.circle.badge.checkmark")
-                        }
+                        Label(model.tr("Login", "登录"), systemImage: "person.crop.circle.badge.checkmark")
                     }
                     .buttonStyle(ManagementButtonStyle())
                     .disabled(isLoggingIn)

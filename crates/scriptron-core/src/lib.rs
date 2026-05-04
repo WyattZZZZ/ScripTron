@@ -317,6 +317,65 @@ impl ScriptronCore {
         all_provider_statuses(&self.auth).await
     }
 
+    /// Run a TronHub plugin's `install.sh` to install the underlying tool/CLI.
+    /// `kind` is "model" or "cli". Returns the script's combined output.
+    /// On success, writes a `.installed` marker file inside the plugin directory.
+    pub async fn run_plugin_install_script(
+        &self,
+        kind: String,
+        name: String,
+    ) -> Result<String, String> {
+        let target_dir = installed_kind_dir(&self.workspace_dir, &kind).join(safe_name(&name));
+        if !target_dir.exists() {
+            return Err(format!("Plugin '{}' is not installed", name));
+        }
+        let script_path = target_dir.join("install.sh");
+        if !script_path.exists() {
+            // No install.sh: treat as already installed.
+            let _ = tokio::fs::write(target_dir.join(".installed"), b"").await;
+            return Ok(format!("No install.sh for '{}', skipping.", name));
+        }
+        let result = self
+            .runner
+            .run(
+                ProcessConfig::new(
+                    "bash",
+                    vec![script_path.to_string_lossy().into_owned()],
+                )
+                .with_working_dir(target_dir.clone())
+                .with_timeout(600),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        if !result.success() {
+            return Err(result.combined_output());
+        }
+        let _ = tokio::fs::write(target_dir.join(".installed"), b"").await;
+        Ok(result.combined_output())
+    }
+
+    /// Returns names of installed plugins whose dependencies have been installed
+    /// (i.e. `.installed` marker exists in the plugin directory).
+    pub async fn list_installed_dependencies(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        for kind in ["model", "cli"] {
+            let dir = installed_kind_dir(&self.workspace_dir, kind);
+            let mut rd = match tokio::fs::read_dir(&dir).await {
+                Ok(rd) => rd,
+                Err(_) => continue,
+            };
+            while let Ok(Some(entry)) = rd.next_entry().await {
+                let path = entry.path();
+                if path.is_dir() && path.join(".installed").exists() {
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        out.push(name.to_string());
+                    }
+                }
+            }
+        }
+        out
+    }
+
     /// Run a TronHub plugin's `--action login` flow (OAuth or device code).
     pub async fn run_plugin_login(&self, name: String) -> Result<String, String> {
         let manifest = {

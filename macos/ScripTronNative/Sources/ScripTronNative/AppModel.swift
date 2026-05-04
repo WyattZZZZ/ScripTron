@@ -417,10 +417,43 @@ final class AppModel: ObservableObject {
             refreshSkills()
             refreshTronhub()
             loadActiveConfig()
-            status = "Installed \(entry.name)"
+            status = "已复制 \(entry.name) 文件，正在执行 install.sh..."
+            // For cli/model plugins, run install.sh asynchronously to install the underlying tool.
+            if entry.kind == "cli" || entry.kind == "model" {
+                runPluginInstallScript(kind: entry.kind, name: entry.name)
+            } else {
+                status = "Installed \(entry.name)"
+            }
         } catch {
             errorMessage = error.localizedDescription
             status = "Install failed"
+        }
+    }
+
+    func runPluginInstallScript(kind: String, name: String) {
+        pluginLoginRunning = name
+        let bridge = bridge
+        Task.detached(priority: .userInitiated) {
+            do {
+                let output = try bridge.call(
+                    "run_plugin_install_script",
+                    params: ["kind": kind, "name": name],
+                    as: String.self
+                )
+                await MainActor.run {
+                    self.pluginLoginRunning = nil
+                    self.pluginLoginOutput = (name: "\(name) (install.sh)", output: output)
+                    self.status = "\(name) 安装完成"
+                    self.refreshRegistry()
+                }
+            } catch {
+                await MainActor.run {
+                    self.pluginLoginRunning = nil
+                    self.pluginLoginOutput = (name: "\(name) (install.sh)", output: error.localizedDescription)
+                    self.errorMessage = error.localizedDescription
+                    self.status = "\(name) 安装失败"
+                }
+            }
         }
     }
 
