@@ -125,6 +125,12 @@ async fn dispatch(request: RpcRequest) -> Result<Value, String> {
             let output = core.run_plugin_login(name).await?;
             serde_json::to_value(output).map_err(|e| e.to_string())
         }
+        "run_plugin_install_script" => {
+            let kind = required_string(&request.params, "kind")?;
+            let name = required_string(&request.params, "name")?;
+            let output = core.run_plugin_install_script(kind, name).await?;
+            serde_json::to_value(output).map_err(|e| e.to_string())
+        }
         "get_auth_status" => {
             serde_json::to_value(core.get_auth_status().await).map_err(|e| e.to_string())
         }
