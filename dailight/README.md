@@ -1,0 +1,218 @@
+# 📔 Dailight
+
+> 我的 Markdown 日记 · 点击条目展开阅读
+
+> 📖 共 **3** 篇 &nbsp;·&nbsp; 🗓 2025-05-08 → 2026-05-09 &nbsp;·&nbsp; 📆 跨度 367 天 &nbsp;·&nbsp; 🔥 连续 1 天
+
+**标签：** `Agent`×1  `职业规划`×1  `硕士申请`×1  `ScripTron`×1  `自我校准`×1  `开始`×1  `日记`×1  `技术`×1  `随想`×1
+
+---
+
+<details>
+<summary>📅 **2026-05-09** &nbsp;·&nbsp; *Sat* &nbsp;·&nbsp; 关于 Agent、职业路径、名校硕士与长期赌注的一次自我校准 · 🎯</summary>
+
+
+🏷 `Agent`  `职业规划`  `硕士申请`  `ScripTron`  `自我校准`
+
+今天这场对话，本质上不是在问"我这份简历能不能投阿里"这么简单，而是在逐渐逼近一个更大的问题：我到底要把自己押在哪一种未来上。
+
+一开始，我还在纠结阿里 Agent 实习的初筛。我投了十几个岗位都挂了，只拿到一个字节面试，所以很自然地怀疑：是不是我的简历其实没有我以为的那么强？后来把简历摊开看，发现我的经历并不是空的：Dify 的 Agentic AI 实习、SoSoValue 的多 Agent / RAG / SFT 经历、Rutgers 的 VLM 空间推理与强化学习科研、ScripTron 这个本地优先 Agent Runtime 项目、一作论文和 GPA，都构成了一条相对清楚的 AI Agent / LLM Systems 主线。
+
+但问题也暴露得很清楚：这份简历不是弱，而是太像"给懂 Agent 的技术面试官看的简历"，不够像"给 HR、ATS 和具体岗位筛选系统看的简历"。它有内容、有技术、有项目，但需要更明确地告诉对方：我能在什么时间、什么地点、以什么身份、解决什么岗位的问题。
+
+## ScripTron：不是成熟产品，但已经不是空想
+
+今天反复讨论了 ScripTron。最初我担心它还没有宣发、还有很多 bug，会不会写进简历显得夸大。但后来从截图和功能状态来看，它已经具备可运行 demo 的形态：原生 macOS 前端、Workspace / Project 管理、Model Management、CLI / Skill 管理、Workspace Agent、对 Codex / OpenAI / Claude / Gemini / DeepSeek / OpenRouter 等模型或执行器的接入规划与实现。
+
+更准确的定位应该是：
+
+> ScripTron 不是成熟商业产品，也不是已经成型的插件生态；它是一个可运行、可演示、持续迭代的 local-first Agent Runtime / automation platform。
+
+这件事的价值不在于"我也做了一个 Agent 工具"，而在于我开始触碰 Agent 系统真正底层的问题：tool-use loop、provider abstraction、CLI agent 作为 external executor 的边界、workspace context、project state、blackboard、skill registry、local execution、SwiftUI 与 Rust runtime 的分层。
+
+今天也明确了一个面试时必须讲清楚的边界：如果目前接的是 Codex CLI 或 Codex API，不能说"Codex 在我的框架里执行"。更准确地说：Codex 本身提供模型能力或 agent executor 能力，ScripTron 负责把它纳入一个本地 workspace runtime，统一管理配置、上下文、工具、状态、执行链路和结果持久化。
+
+**一句话概括：**
+
+> Codex 是 executor/provider，ScripTron 是 orchestration/runtime layer。
+
+这个边界如果讲清楚，项目就不会显得虚；如果讲不清，就会被面试官质疑为只是套了 API 或 CLI。
+
+## AI Infra、Agent Infra 与我的定位
+
+今天也澄清了一个概念：AI infra 不只是训练模型那一批人。训练集群、GPU 调度、vLLM serving、分布式训练、RLHF 平台当然是 AI infra，但 ScripTron 更接近另一层：Agent infra / LLM application infrastructure。
+
+也就是说，我现在的定位不应该是 foundation model training infra，而是：
+
+**Agent Runtime / Tool-use Infrastructure / Local-first Agent Platform / LLM Application Infrastructure。**
+
+这条路和我的 Dify、SoSoValue、ScripTron、Rutgers RA 都能连接起来。Dify 和 SoSoValue 是现实业务中的 Agent workflow，ScripTron 是我自己对 Agent runtime 和 workspace 的抽象尝试，Rutgers RA 则是更偏 research 的 VLM/RL reasoning 线。
+
+## 美国工作、OPT、硕士与名校路径
+
+今天花了很多时间讨论美国路径。结论大致是：如果本科毕业能直接进美国 Big Tech full-time，那经济上和职业积累上当然是最优解。但如果直接进不了 Big Tech，那么先在美国小厂/中厂/AI startup 做几年，稳住 OPT/STEM OPT 身份和现金流，再读一个强 CS/AI 硕士，是一条很现实的二次跃迁路径。
+
+最终筛选出一个偏研究型、和 Agent / LLM systems 方向相关的 12 所目标清单：
+
+| # | 学校 | 项目 | 定位 |
+|---|------|------|------|
+| 1 | Stanford | MSCS | 冲刺 |
+| 2 | MIT | EECS / CSE | 冲刺 |
+| 3 | CMU | MSCS / MSAII / MCDS / MIIS / MSML | 冲刺 |
+| 4 | UC Berkeley | EECS MS / MEng | 冲刺 |
+| 5 | Caltech | CMS / CS-related | 冲刺 |
+| 6 | Princeton | CS MSE | 冲刺 |
+| 7 | Cornell | CS MEng / Cornell Tech | 强主申 |
+| 8 | Columbia | MSCS / MSDS | 重点经营（mentor 强推） |
+| 9 | Harvard | SEAS CSE / Data Science | 冲刺 |
+| 10 | Georgia Tech | MSCS | 强主申 |
+| 11 | UCSD | MSCS | 强主申 |
+| 12 | UCLA | MSCS | 强主申 |
+
+其中 Columbia 因为 mentor 是哥大毕业且愿意强推，会成为一个需要重点经营的项目。GT、UCSD、UCLA 是更现实的强主申。Stanford、MIT、Berkeley、Caltech、Princeton、CMU 则是更高难度的冲刺。
+
+## 研究型 Agent：不是追热点，而是押结构性问题
+
+今天最重要的判断之一，是我开始把"Agent"从一个岗位热词，重新理解为一个长期结构性问题。
+
+未来几年，Agent 这个词本身可能会泡沫化。简单 RAG、简单 chatbot、简单 workflow builder、简单 API wrapper 都会快速贬值。真正有价值的不是"我会搭 Agent demo"，而是：
+
+- tool-use reliability
+- agent runtime
+- workflow orchestration
+- eval & observability
+- memory / state management
+- human-in-the-loop
+- permissions & audit
+- enterprise integration
+- long-horizon task execution
+- failure recovery
+
+这也解释了为什么我在 Dify 第二个月就觉得它可能走不远。Dify 把 Agent 产品化成了"工作流编辑器"，但普通文员并不想学习节点、变量、schema、工具调用。他们真正想要的是：
+
+> 他打字，你干事；打完字，干完事。
+
+如果一个用户没有提升效率的动力，也没有被组织奖励效率提升，那么让他学习一个复杂的效率工具是很难成立的。真正的 Agent 产品不应该要求普通用户成为 workflow designer，而应该自己成为 workflow designer。用户只给目标，Agent 负责规划、调用工具、执行、校验、汇报，并在必要时请求最小的人类帮助。
+
+这个判断很重要，因为它把我从"会用 Agent 框架的人"推向另一个定位：
+
+> 我理解 Agent 系统为什么会失败，并且想研究如何让它更可靠、更低交互成本、更贴近真实工作流。
+
+这也可以成为未来申请研究型硕士或 PhD 的主线：
+
+> 现在很多 Agent 平台把复杂性转嫁给用户。我想研究如何构建更可靠、更低交互成本、更贴近真实工作流的 Agent execution systems，让非技术用户通过自然语言完成真实任务，而不是学习搭建 Agent。
+
+## 历史类比：投机者、投资者、创造者
+
+今天还讨论了科技进步如何让旧职业消失。电话接线员、电梯操作员、点灯人、送冰工、保龄球摆瓶员、打字员、旅行社代理、数据录入员等职业，都不是因为"人突然没用了"，而是因为其核心任务被标准化、自动化、系统化。
+
+这给 AI Agent 的启发是：工程师这个职业未必会消失，但简单、可标准化、可自动生成的任务会贬值。真正值钱的是能设计、控制、评估、维护新系统的人。
+
+今天总结出一句话：
+
+> **投机者追逐潮流，投资者押注结构性变化，创造者定义下一轮潮流。**
+
+对我来说，不能只追"Agent 很火"这个潮流。我要押的是 Agent 背后的结构性变化：从 demo 到可靠系统，从工作流编辑器到任务执行器，从人工搭建到自然语言驱动，从模型调用到可控、可观测、可恢复的 agentic infrastructure。
+
+更狠的一句话是：
+
+> **追热点的人在潮流退去后被定价，解决结构性问题的人在潮流成熟后被溢价。**
+
+## 对自己的提醒
+
+1. 我的简历不是弱，但要更岗位化、更美国化、更可读。
+2. ScripTron 可以写、可以展示，但要讲清楚它是可运行 demo / Agent Runtime，而不是成熟生态。
+3. 我未来不应该只是做 AI Agent 应用，而应该往 **Reliable Agentic AI Systems / Agent Runtime / Tool-use Infrastructure** 方向收敛。
+4. 美国先工作几年再读强硕士是现实路径，但前提是工作期间不能丢掉研究线。
+5. 如果未来想冲 Stanford、CMU、Berkeley、Columbia、GT、UCSD、UCLA 这些项目，我需要持续积累研究产出、强推荐、可验证项目和美国工作经历。
+6. 名校不是 offer 本身，而是进入顶级筛选池的门票。真正决定上限的仍然是研究成果、实习、系统能力和主线清晰度。
+7. 未来 5 年 AI/Agent 行业会变化很大，简单 Agent 工程会贬值，高端 Agent systems / research engineering 会升值。
+
+---
+
+**今天的核心结论：**
+
+> 我不应该把自己定义为"会做 Agent 的人"，而应该定义为"研究和构建可靠 Agent 系统的人"。
+
+这条路比单纯追岗位更慢、更难，但也更可能穿越一轮技术潮流。
+
+</details>
+
+<details>
+<summary>📅 **2025-05-09** &nbsp;·&nbsp; *Fri* &nbsp;·&nbsp; 第一篇日记 · 😊</summary>
+
+
+🏷 `开始`  `日记`
+
+# 今天开始用 Dailight 写日记
+
+今天把日记系统搭好了。以后每篇日记就是一个 `.md` 文件，直接 `git push` 就能上线。
+
+## 为什么选择这个方式
+
+- 纯文本，永不过时
+- Git 版本控制，历史可追溯
+- 写 Markdown 就行，没有多余的 UI 干扰
+- 数据在自己手里
+
+## 今日所思
+
+> 简单的工具，才能长期坚持使用。
+
+## 任务
+
+- [x] 搭建 Dailight 系统
+- [x] 写第一篇日记
+- [ ] 明天继续写
+
+---
+
+*今天天气不错。*
+
+</details>
+
+<details>
+<summary>📅 **2025-05-08** &nbsp;·&nbsp; *Thu* &nbsp;·&nbsp; 想法涌现的一天 · 🤔</summary>
+
+
+🏷 `技术`  `随想`
+
+# 想法涌现的一天
+
+今天脑子里突然冒出好几个想法，来不及一一记录，先把最重要的写下来。
+
+## 关于工具的思考
+
+一直在想，为什么有些工具用久了会感觉越来越顺手，而另一些用了很久还是觉得别扭？
+
+我觉得核心在于**工具是否尊重使用者的心智模型**。
+
+好的工具：
+- 行为可预期
+- 错误可撤销
+- 状态可见
+
+坏的工具：
+- 黑盒操作
+- 副作用难以追踪
+- 需要记忆大量特殊规则
+
+## 代码片段：今天写的一个小函数
+
+```python
+def parse_date(filename: str) -> str:
+    """从 YYYY-MM-DD.md 文件名提取日期"""
+    return filename.replace('.md', '')
+```
+
+简单但够用。
+
+---
+
+*明天继续整理思路。*
+
+</details>
+
+---
+
+<sub>📌 本文件由 [`generate.py`](generate.py) 自动生成 · 最后更新：2026-05-09 17:06 · 新增日记请在 [`entries/`](entries/) 目录下创建 `YYYY-MM-DD.md`</sub>

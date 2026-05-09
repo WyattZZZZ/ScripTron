@@ -1,0 +1,744 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dailight — GitHub Markdown 解析器</title>
+
+  <!-- GitHub Markdown CSS -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.6.1/github-markdown-light.min.css" />
+  <!-- Highlight.js for code blocks -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/styles/github.min.css" />
+  <!-- marked.js GFM parser -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/13.0.3/marked.min.js"></script>
+  <!-- highlight.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.10.0/highlight.min.js"></script>
+  <!-- DOMPurify for XSS sanitization -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.1.6/purify.min.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #f6f8fa;
+      --surface: #ffffff;
+      --border: #d0d7de;
+      --text: #1f2328;
+      --muted: #656d76;
+      --accent: #0969da;
+      --accent-hover: #0550ae;
+      --header-bg: #24292f;
+      --header-text: #f0f6fc;
+      --toolbar-bg: #f6f8fa;
+      --radius: 6px;
+      --shadow: 0 1px 3px rgba(27,31,36,.12), 0 8px 24px rgba(27,31,36,.08);
+      --pane-min: 320px;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--header-bg);
+      color: var(--header-text);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 0 20px;
+      height: 52px;
+      flex-shrink: 0;
+      border-bottom: 1px solid #3d444d;
+    }
+
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: -.2px;
+    }
+
+    .logo svg { opacity: .9; }
+
+    .header-meta {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      font-size: 13px;
+      color: #8b949e;
+    }
+
+    .badge {
+      background: rgba(99,182,228,.15);
+      color: #58a6ff;
+      border: 1px solid rgba(88,166,255,.25);
+      border-radius: 20px;
+      padding: 2px 10px;
+      font-size: 11px;
+      font-weight: 600;
+      letter-spacing: .3px;
+    }
+
+    /* ── Toolbar ── */
+    .toolbar {
+      background: var(--toolbar-bg);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 6px 16px;
+      flex-shrink: 0;
+      flex-wrap: wrap;
+    }
+
+    .toolbar-group {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      padding: 0 4px;
+    }
+
+    .toolbar-group + .toolbar-group {
+      border-left: 1px solid var(--border);
+    }
+
+    .tb-btn {
+      background: none;
+      border: 1px solid transparent;
+      border-radius: var(--radius);
+      padding: 4px 8px;
+      cursor: pointer;
+      font-size: 13px;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      white-space: nowrap;
+      transition: background .1s, border-color .1s, color .1s;
+      font-family: inherit;
+    }
+
+    .tb-btn:hover {
+      background: rgba(175,184,193,.2);
+      border-color: var(--border);
+    }
+
+    .tb-btn.active {
+      background: var(--accent);
+      color: #fff;
+      border-color: var(--accent);
+    }
+
+    .tb-btn svg { flex-shrink: 0; }
+
+    .toolbar-spacer { flex: 1; }
+
+    /* copy feedback */
+    .tb-btn.copied { background: #1a7f37; color: #fff; border-color: #1a7f37; }
+
+    /* ── Layout ── */
+    .workspace {
+      flex: 1;
+      display: flex;
+      overflow: hidden;
+      min-height: 0;
+    }
+
+    /* ── Panes ── */
+    .pane {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      min-width: var(--pane-min);
+      overflow: hidden;
+    }
+
+    .pane + .pane { border-left: 1px solid var(--border); }
+
+    .pane-header {
+      background: var(--toolbar-bg);
+      border-bottom: 1px solid var(--border);
+      padding: 6px 16px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--muted);
+      letter-spacing: .4px;
+      text-transform: uppercase;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+    }
+
+    .word-count {
+      font-weight: 400;
+      font-size: 11px;
+    }
+
+    /* ── Editor ── */
+    #editor {
+      flex: 1;
+      resize: none;
+      border: none;
+      outline: none;
+      padding: 20px;
+      font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--text);
+      background: var(--surface);
+      tab-size: 2;
+      overflow-y: auto;
+    }
+
+    #editor::placeholder { color: #8b949e; }
+
+    /* ── Preview ── */
+    .preview-wrap {
+      flex: 1;
+      overflow-y: auto;
+      background: var(--surface);
+    }
+
+    .markdown-body {
+      padding: 24px 32px;
+      max-width: 960px;
+      margin: 0 auto;
+    }
+
+    /* Override github-markdown-css background */
+    .markdown-body { background: transparent !important; }
+
+    /* ── Divider ── */
+    .divider {
+      width: 4px;
+      background: var(--bg);
+      border-left: 1px solid var(--border);
+      border-right: 1px solid var(--border);
+      cursor: col-resize;
+      flex-shrink: 0;
+      transition: background .15s;
+    }
+
+    .divider:hover, .divider.dragging { background: var(--accent); }
+
+    /* ── Status bar ── */
+    .statusbar {
+      background: var(--header-bg);
+      color: #8b949e;
+      font-size: 11px;
+      padding: 3px 16px;
+      display: flex;
+      gap: 16px;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .statusbar span { display: flex; align-items: center; gap: 4px; }
+
+    .status-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: #3fb950;
+      display: inline-block;
+    }
+
+    /* ── Fullscreen pane ── */
+    .pane.hidden { display: none; }
+
+    /* ── Scrollbars ── */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #d0d7de; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #8b949e; }
+
+    /* ── Responsive ── */
+    @media (max-width: 700px) {
+      .pane { min-width: 100%; }
+      .divider { display: none; }
+      #preview-pane { display: none; }
+      #preview-pane.mobile-show { display: flex; }
+      #editor-pane.mobile-hide { display: none; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- Header -->
+<header>
+  <div class="logo">
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/>
+    </svg>
+    Dailight
+  </div>
+  <div class="header-meta">
+    <span class="badge">GFM</span>
+    <span>GitHub Markdown 解析器</span>
+  </div>
+</header>
+
+<!-- Toolbar -->
+<div class="toolbar">
+  <!-- Insert helpers -->
+  <div class="toolbar-group">
+    <button class="tb-btn" onclick="insert('**', '**', '粗体')" title="粗体 (Ctrl+B)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"/><path d="M6 12h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"/></svg>
+      <span>粗体</span>
+    </button>
+    <button class="tb-btn" onclick="insert('*', '*', '斜体')" title="斜体 (Ctrl+I)">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="4" x2="10" y2="4"/><line x1="14" y1="20" x2="5" y2="20"/><line x1="15" y1="4" x2="9" y2="20"/></svg>
+      <span>斜体</span>
+    </button>
+    <button class="tb-btn" onclick="insert('~~', '~~', '删除线')">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4H9a3 3 0 0 0-2.83 4"/><path d="M14 20H9a3 3 0 0 1-3-3"/><path d="M4 12h16"/></svg>
+      <span>删除线</span>
+    </button>
+    <button class="tb-btn" onclick="insert('`', '`', '代码')">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+      <span>行内代码</span>
+    </button>
+  </div>
+
+  <div class="toolbar-group">
+    <button class="tb-btn" onclick="insertHeading(1)">H1</button>
+    <button class="tb-btn" onclick="insertHeading(2)">H2</button>
+    <button class="tb-btn" onclick="insertHeading(3)">H3</button>
+  </div>
+
+  <div class="toolbar-group">
+    <button class="tb-btn" onclick="insertBlock('- 列表项')">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+      <span>列表</span>
+    </button>
+    <button class="tb-btn" onclick="insertBlock('- [ ] 任务项')">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      <span>任务</span>
+    </button>
+    <button class="tb-btn" onclick="insertBlock('> 引用内容')">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21c3 0 7-1 7-8V5c0-1.25-.756-2.017-2-2H4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2 1 0 1 0 1 1v1c0 1-1 2-2 2s-1 .008-1 1.031V20c0 1 0 1 1 1z"/><path d="M15 21c3 0 7-1 7-8V5c0-1.25-.757-2.017-2-2h-4c-1.25 0-2 .75-2 1.972V11c0 1.25.75 2 2 2h.75c0 2.25.25 4-2.75 4v3c0 1 0 1 1 1z"/></svg>
+      <span>引用</span>
+    </button>
+    <button class="tb-btn" onclick="insertCodeBlock()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+      <span>代码块</span>
+    </button>
+    <button class="tb-btn" onclick="insertTable()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/><line x1="12" y1="3" x2="12" y2="21"/></svg>
+      <span>表格</span>
+    </button>
+    <button class="tb-btn" onclick="insertLink()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+      <span>链接</span>
+    </button>
+  </div>
+
+  <div class="toolbar-group">
+    <button class="tb-btn" onclick="insertBadge()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="6"/><path d="M15.477 12.89 17 22l-5-3-5 3 1.523-9.11"/></svg>
+      <span>徽章</span>
+    </button>
+    <button class="tb-btn" onclick="insertHr()">— 分割线</button>
+  </div>
+
+  <div class="toolbar-spacer"></div>
+
+  <div class="toolbar-group">
+    <button class="tb-btn" id="btn-load-sample" onclick="loadSample()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+      加载示例
+    </button>
+    <button class="tb-btn" id="btn-copy" onclick="copyHTML()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+      复制 HTML
+    </button>
+    <button class="tb-btn" onclick="clearEditor()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+      清空
+    </button>
+  </div>
+</div>
+
+<!-- Main workspace -->
+<div class="workspace">
+  <!-- Editor pane -->
+  <div class="pane" id="editor-pane">
+    <div class="pane-header">
+      <span>✏️ 编辑器</span>
+      <span class="word-count" id="word-count">0 字符 · 0 行</span>
+    </div>
+    <textarea id="editor" spellcheck="false" placeholder="在此输入 Markdown 内容…
+
+支持 GitHub Flavored Markdown (GFM)：
+• 表格、任务列表、删除线
+• 围栏代码块（带语法高亮）
+• 自动链接、HTML 等
+
+点击工具栏按钮快速插入元素，或直接手写。"></textarea>
+  </div>
+
+  <!-- Resize divider -->
+  <div class="divider" id="divider"></div>
+
+  <!-- Preview pane -->
+  <div class="pane" id="preview-pane">
+    <div class="pane-header">
+      <span>👁 预览（GitHub 样式）</span>
+      <button class="tb-btn" style="font-size:11px;padding:2px 8px;" onclick="copyMarkdown()" title="复制 Markdown 源码">复制 MD</button>
+    </div>
+    <div class="preview-wrap">
+      <article class="markdown-body" id="preview"></article>
+    </div>
+  </div>
+</div>
+
+<!-- Status bar -->
+<div class="statusbar">
+  <span><i class="status-dot"></i> 实时预览已启用</span>
+  <span id="status-render">渲染耗时：—</span>
+  <span id="status-tokens">—</span>
+  <span style="margin-left:auto;opacity:.6">Dailight · GFM · marked.js · highlight.js</span>
+</div>
+
+<script>
+// ── marked.js config ──────────────────────────────────────────────
+const renderer = new marked.Renderer();
+
+// Custom heading with anchor (GitHub style)
+renderer.heading = ({ text, depth }) => {
+  const slug = text.toLowerCase().replace(/[^\w一-龥]+/g, '-').replace(/^-|-$/g, '');
+  return `<h${depth} id="${slug}"><a class="anchor" aria-hidden="true" href="#${slug}"><svg class="octicon octicon-link" viewBox="0 0 16 16" width="16" height="16"><path d="M7.775 3.275a.75.75 0 0 0 1.06 1.06l1.25-1.25a2 2 0 1 1 2.83 2.83l-2.5 2.5a2 2 0 0 1-2.83 0 .75.75 0 0 0-1.06 1.06 3.5 3.5 0 0 0 4.95 0l2.5-2.5a3.5 3.5 0 0 0-4.95-4.95l-1.25 1.25zm-4.69 9.64a2 2 0 0 1 0-2.83l2.5-2.5a2 2 0 0 1 2.83 0 .75.75 0 0 0 1.06-1.06 3.5 3.5 0 0 0-4.95 0l-2.5 2.5a3.5 3.5 0 0 0 4.95 4.95l1.25-1.25a.75.75 0 0 0-1.06-1.06l-1.25 1.25a2 2 0 0 1-2.83 0z"></path></svg></a>${text}</h${depth}>`;
+};
+
+marked.setOptions({
+  renderer,
+  gfm: true,
+  breaks: false,
+  pedantic: false,
+});
+
+// Syntax highlighting hook
+marked.use({
+  extensions: [],
+  walkTokens(token) {},
+});
+
+// ── DOM refs ──────────────────────────────────────────────────────
+const editor    = document.getElementById('editor');
+const preview   = document.getElementById('preview');
+const wc        = document.getElementById('word-count');
+const statusRender = document.getElementById('status-render');
+const statusTokens = document.getElementById('status-tokens');
+
+// ── Render ────────────────────────────────────────────────────────
+let renderTimer = null;
+
+function render() {
+  const t0 = performance.now();
+  const src = editor.value;
+
+  const raw = marked.parse(src);
+  const clean = DOMPurify.sanitize(raw, {
+    ADD_TAGS: ['details', 'summary'],
+    ADD_ATTR: ['id', 'class', 'align', 'href', 'target'],
+  });
+  preview.innerHTML = clean;
+
+  // highlight code blocks
+  preview.querySelectorAll('pre code').forEach(block => {
+    hljs.highlightElement(block);
+  });
+
+  const ms = (performance.now() - t0).toFixed(1);
+  statusRender.textContent = `渲染耗时：${ms} ms`;
+
+  // word count
+  const lines = src.split('\n').length;
+  const chars = src.length;
+  wc.textContent = `${chars.toLocaleString()} 字符 · ${lines} 行`;
+  statusTokens.textContent = `约 ${Math.round(chars / 4)} tokens`;
+
+  // persist
+  try { localStorage.setItem('dailight_src', src); } catch {}
+}
+
+// Debounced render
+editor.addEventListener('input', () => {
+  clearTimeout(renderTimer);
+  renderTimer = setTimeout(render, 80);
+});
+
+// ── Tab key ───────────────────────────────────────────────────────
+editor.addEventListener('keydown', e => {
+  if (e.key === 'Tab') {
+    e.preventDefault();
+    insertAtCursor('  ');
+  }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'b') { e.preventDefault(); insert('**', '**', '粗体'); }
+  if ((e.ctrlKey || e.metaKey) && e.key === 'i') { e.preventDefault(); insert('*', '*', '斜体'); }
+});
+
+// ── Insert helpers ────────────────────────────────────────────────
+function insertAtCursor(text) {
+  const start = editor.selectionStart;
+  const end   = editor.selectionEnd;
+  editor.value = editor.value.slice(0, start) + text + editor.value.slice(end);
+  editor.selectionStart = editor.selectionEnd = start + text.length;
+  editor.focus();
+  render();
+}
+
+function insert(before, after, placeholder) {
+  const start = editor.selectionStart;
+  const end   = editor.selectionEnd;
+  const sel   = editor.value.slice(start, end) || placeholder;
+  const replacement = before + sel + after;
+  editor.value = editor.value.slice(0, start) + replacement + editor.value.slice(end);
+  editor.selectionStart = start + before.length;
+  editor.selectionEnd   = start + before.length + sel.length;
+  editor.focus();
+  render();
+}
+
+function insertBlock(text) {
+  const pos = editor.selectionStart;
+  const before = editor.value.slice(0, pos);
+  const after  = editor.value.slice(pos);
+  const prefix = (before.length > 0 && !before.endsWith('\n')) ? '\n' : '';
+  const suffix = after.startsWith('\n') ? '' : '\n';
+  const inserted = prefix + text + suffix;
+  editor.value = before + inserted + after;
+  editor.selectionStart = editor.selectionEnd = pos + inserted.length;
+  editor.focus();
+  render();
+}
+
+function insertHeading(level) {
+  insertBlock('#'.repeat(level) + ' 标题');
+}
+
+function insertCodeBlock() {
+  const start = editor.selectionStart;
+  const end   = editor.selectionEnd;
+  const sel   = editor.value.slice(start, end) || '// 代码';
+  const block = '\n```js\n' + sel + '\n```\n';
+  editor.value = editor.value.slice(0, start) + block + editor.value.slice(end);
+  editor.selectionStart = start + 5;
+  editor.selectionEnd   = start + 5 + 2; // select "js"
+  editor.focus();
+  render();
+}
+
+function insertTable() {
+  const tbl = `
+| 列一 | 列二 | 列三 |
+| ---- | ---- | ---- |
+| A1   | B1   | C1   |
+| A2   | B2   | C2   |
+`;
+  insertBlock(tbl);
+}
+
+function insertLink() {
+  const start = editor.selectionStart;
+  const end   = editor.selectionEnd;
+  const text  = editor.value.slice(start, end) || '链接文本';
+  const md    = `[${text}](https://example.com)`;
+  editor.value = editor.value.slice(0, start) + md + editor.value.slice(end);
+  editor.selectionStart = start + text.length + 3;
+  editor.selectionEnd   = editor.selectionStart + 19; // select URL
+  editor.focus();
+  render();
+}
+
+function insertBadge() {
+  insertBlock('![徽章](https://img.shields.io/badge/状态-稳定-brightgreen)');
+}
+
+function insertHr() {
+  insertBlock('\n---\n');
+}
+
+// ── Actions ───────────────────────────────────────────────────────
+function clearEditor() {
+  if (editor.value && !confirm('确认清空编辑器内容？')) return;
+  editor.value = '';
+  render();
+  editor.focus();
+}
+
+async function copyHTML() {
+  const btn = document.getElementById('btn-copy');
+  try {
+    await navigator.clipboard.writeText(preview.innerHTML);
+    btn.classList.add('copied');
+    btn.textContent = '✓ 已复制';
+    setTimeout(() => {
+      btn.classList.remove('copied');
+      btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> 复制 HTML';
+    }, 2000);
+  } catch { alert('复制失败，请手动复制。'); }
+}
+
+async function copyMarkdown() {
+  try {
+    await navigator.clipboard.writeText(editor.value);
+  } catch { alert('复制失败。'); }
+}
+
+// ── Sample content ────────────────────────────────────────────────
+function loadSample() {
+  editor.value = SAMPLE;
+  render();
+  editor.focus();
+}
+
+const SAMPLE = `# Dailight — GitHub Markdown 解析器
+
+> 一个支持 GitHub Flavored Markdown（GFM）的实时双栏解析器，所见即所得。
+
+[![版本](https://img.shields.io/badge/版本-1.0.0-blue)](https://github.com) [![许可证](https://img.shields.io/badge/许可证-MIT-green)](https://github.com) [![GFM](https://img.shields.io/badge/规范-GFM-orange)](https://github.github.com/gfm/)
+
+---
+
+## 功能特性
+
+- **实时预览**：输入时即时渲染，延迟 < 80ms
+- **GitHub 样式**：完全复刻 github-markdown-css 渲染效果
+- **语法高亮**：代码块由 highlight.js 渲染
+- **XSS 防护**：所有输出经过 DOMPurify 净化
+- **任务列表**：支持 GFM 任务清单
+- ~~旧功能~~ ✅ 已废弃功能
+
+---
+
+## 快速上手
+
+### 安装依赖
+
+\`\`\`bash
+# 无需安装，直接在浏览器中打开 index.html
+open dailight/index.html
+\`\`\`
+
+### 使用示例
+
+\`\`\`javascript
+// marked.js 配置（GFM 模式）
+marked.setOptions({
+  gfm: true,
+  breaks: false,
+});
+
+const html = marked.parse('# Hello **World**');
+console.log(html); // <h1>Hello <strong>World</strong></h1>
+\`\`\`
+
+---
+
+## 支持的 GFM 语法
+
+| 元素        | 语法示例                     | 是否支持 |
+| ----------- | ---------------------------- | :------: |
+| 粗体        | \`**文本**\`                 | ✅       |
+| 斜体        | \`*文本*\`                   | ✅       |
+| 删除线      | \`~~文本~~\`                 | ✅       |
+| 行内代码    | \`\`代码\`\`                 | ✅       |
+| 围栏代码块  | \`\`\`lang ... \`\`\`        | ✅       |
+| 表格        | \`| 列 | 列 |\`              | ✅       |
+| 任务列表    | \`- [ ] 项目\`               | ✅       |
+| 自动链接    | https://github.com           | ✅       |
+| 脚注        | \`[^1]\`                     | ⚠️ 扩展  |
+
+---
+
+## 任务清单
+
+- [x] 完成 GFM 解析器
+- [x] 集成 highlight.js 语法高亮
+- [x] 添加 DOMPurify 安全净化
+- [ ] 支持拖拽上传图片
+- [ ] 导出为 PDF
+
+---
+
+## 引用示例
+
+> "代码是写给人读的，顺带也能在机器上运行。"
+> — Harold Abelson
+
+---
+
+## 链接与图片
+
+访问 [GitHub](https://github.com) 或查看 [GFM 规范](https://github.github.com/gfm/)。
+
+---
+
+*由 **Dailight** 构建 · 基于 marked.js + highlight.js + github-markdown-css*
+`;
+
+// ── Resize divider ────────────────────────────────────────────────
+const divider    = document.getElementById('divider');
+const editorPane = document.getElementById('editor-pane');
+const previewPane= document.getElementById('preview-pane');
+
+let dragging = false, startX = 0, startLeft = 0;
+
+divider.addEventListener('mousedown', e => {
+  dragging = true;
+  startX = e.clientX;
+  startLeft = editorPane.getBoundingClientRect().width;
+  divider.classList.add('dragging');
+  document.body.style.cursor = 'col-resize';
+  document.body.style.userSelect = 'none';
+});
+
+document.addEventListener('mousemove', e => {
+  if (!dragging) return;
+  const dx = e.clientX - startX;
+  const workspace = divider.parentElement.getBoundingClientRect().width;
+  const newLeft = Math.min(Math.max(startLeft + dx, 280), workspace - 280);
+  editorPane.style.flex = 'none';
+  editorPane.style.width = newLeft + 'px';
+  previewPane.style.flex = '1';
+  previewPane.style.width = 'auto';
+});
+
+document.addEventListener('mouseup', () => {
+  if (!dragging) return;
+  dragging = false;
+  divider.classList.remove('dragging');
+  document.body.style.cursor = '';
+  document.body.style.userSelect = '';
+});
+
+// ── Restore from localStorage ─────────────────────────────────────
+(function init() {
+  try {
+    const saved = localStorage.getItem('dailight_src');
+    if (saved) {
+      editor.value = saved;
+    } else {
+      loadSample();
+      return;
+    }
+  } catch {
+    loadSample();
+    return;
+  }
+  render();
+})();
+</script>
+</body>
+</html>
