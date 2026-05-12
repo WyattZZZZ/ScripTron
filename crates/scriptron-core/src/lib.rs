@@ -150,6 +150,25 @@ pub struct SkillEntry {
     pub path: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillIndexEntry {
+    pub name: String,
+    pub description: String,
+    pub path: String,
+    pub required_clis: Vec<String>,
+    pub capabilities: Vec<String>,
+    pub tags: Vec<String>,
+    pub document: String,
+    pub tokens: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RunTaskPreviewResult {
+    pub events: Vec<ExecutionEvent>,
+    pub blackboard: serde_json::Value,
+    pub log_path: String,
+}
+
 pub struct ScriptronCore {
     registry: Arc<RwLock<CliRegistry>>,
     auth: Arc<AuthManager>,
@@ -286,7 +305,15 @@ impl ScriptronCore {
         install_tronhub_entry(&self.workspace_dir, &kind, &name)
             .await
             .map_err(|e| e.to_string())?;
-        if kind == "cli" || kind == "model" {
+        if kind == "skill" || kind == "skills" {
+            install_skill_tool_adapters(&self.workspace_dir, &name)
+                .await
+                .map_err(|e| e.to_string())?;
+            rebuild_skill_index(&self.workspace_dir)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        if kind == "cli" || kind == "model" || kind == "skill" || kind == "skills" {
             self.registry
                 .write()
                 .await
@@ -310,6 +337,9 @@ impl ScriptronCore {
                 .await
                 .map_err(|e| e.to_string())?;
         }
+        rebuild_skill_index(&self.workspace_dir)
+            .await
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -338,12 +368,10 @@ impl ScriptronCore {
         let result = self
             .runner
             .run(
-                ProcessConfig::new(
-                    "bash",
-                    vec![script_path.to_string_lossy().into_owned()],
-                )
-                .with_working_dir(target_dir.clone())
-                .with_timeout(600),
+                ProcessConfig::new("bash", vec![script_path.to_string_lossy().into_owned()])
+                    .with_working_dir(target_dir.clone())
+                    .with_timeout(600)
+                    .with_env("PATH", plugin_runtime_path()),
             )
             .await
             .map_err(|e| e.to_string())?;
@@ -397,7 +425,8 @@ impl ScriptronCore {
                     vec!["--action".to_string(), "login".to_string()],
                 )
                 .with_working_dir(working_dir)
-                .with_timeout(300),
+                .with_timeout(300)
+                .with_env("PATH", plugin_runtime_path()),
             )
             .await
             .map_err(|e| e.to_string())?;
@@ -466,6 +495,51 @@ impl ScriptronCore {
             .await
     }
 
+    pub async fn run_tron_task_preview(
+        &self,
+        cells: Vec<TronCell>,
+        project_path: String,
+        blackboard: Option<serde_json::Value>,
+        tron_path: Option<String>,
+    ) -> Result<RunTaskPreviewResult, String> {
+        let mut blackboard = blackboard.unwrap_or_else(|| serde_json::json!({}));
+        let log_path = run_log_path(tron_path.as_deref(), &project_path);
+        let mut events = vec![ExecutionEvent::Warning {
+            message: format!("Run started. Log file: {}", log_path.display()),
+        }];
+        events.extend(
+            self.run_orchestrated_tron_task(
+                cells.clone(),
+                PathBuf::from(project_path),
+                blackboard.clone(),
+            )
+            .await?,
+        );
+        let response = events
+            .iter()
+            .filter_map(|event| match event {
+                ExecutionEvent::Text { content } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        update_blackboard_notes(
+            &mut blackboard,
+            &response,
+            tron_path.as_deref().unwrap_or("run"),
+        );
+        if let Some(path) = tron_path {
+            self.save_tron_file(path, cells, Some(blackboard.clone()))
+                .await?;
+        }
+        write_run_log(&log_path, &events).await?;
+        Ok(RunTaskPreviewResult {
+            events,
+            blackboard,
+            log_path: log_path.to_string_lossy().into_owned(),
+        })
+    }
+
     async fn run_orchestrated_tron_task(
         &self,
         cells: Vec<TronCell>,
@@ -517,15 +591,21 @@ impl ScriptronCore {
                 };
                 let agent = AgentLoop::new(provider.clone(), self.registry.clone());
                 handles.push(tokio::spawn(async move {
-                    let output = run_agent_to_markdown(agent, task).await?;
-                    Ok::<(String, String), String>((name, output))
+                    let (output, events) = run_agent_to_events(agent, task).await?;
+                    Ok::<(String, String, Vec<ExecutionEvent>), String>((name, output, events))
                 }));
             }
 
+            let mut level_events = Vec::new();
             for handle in handles {
-                let (name, output) = handle.await.map_err(|e| e.to_string())??;
+                let (name, output, events) = handle.await.map_err(|e| e.to_string())??;
                 outputs.insert(name, output);
+                level_events.extend(events);
             }
+            outputs.insert(
+                format!("__events_{}", outputs.len()),
+                serde_json::to_string(&level_events).unwrap_or_default(),
+            );
         }
 
         let mut response = String::new();
@@ -539,12 +619,25 @@ impl ScriptronCore {
             }
         }
 
-        Ok(vec![
-            ExecutionEvent::Text {
-                content: response.trim().to_string(),
-            },
-            ExecutionEvent::Complete,
-        ])
+        let mut events = Vec::new();
+        let mut internal_event_keys = outputs
+            .keys()
+            .filter(|key| key.starts_with("__events_"))
+            .cloned()
+            .collect::<Vec<_>>();
+        internal_event_keys.sort();
+        for key in internal_event_keys {
+            if let Some(raw) = outputs.get(&key) {
+                if let Ok(mut parsed) = serde_json::from_str::<Vec<ExecutionEvent>>(raw) {
+                    events.append(&mut parsed);
+                }
+            }
+        }
+        events.push(ExecutionEvent::Text {
+            content: response.trim().to_string(),
+        });
+        events.push(ExecutionEvent::Complete);
+        Ok(events)
     }
 
     pub async fn get_memory_snapshot(
@@ -892,23 +985,38 @@ struct FunctionGraph {
 const RUN_NAME_PREFIX: &str = "[[scriptron:run-name]]";
 const GEN_CELL_PREFIX: &str = "[[scriptron:gen-markdown]]";
 
-async fn run_agent_to_markdown(agent: AgentLoop, task: TronTask) -> Result<String, String> {
+async fn run_agent_to_events(
+    agent: AgentLoop,
+    task: TronTask,
+) -> Result<(String, Vec<ExecutionEvent>), String> {
     let (tx, mut rx) = mpsc::channel(128);
     let handle = tokio::spawn(async move { agent.run(task, tx).await });
     let mut text = Vec::new();
+    let mut events = Vec::new();
     while let Some(event) = rx.recv().await {
         match event {
-            ExecutionEvent::Text { content } => text.push(content),
-            ExecutionEvent::Error { message } => return Err(message),
-            ExecutionEvent::Complete => break,
-            _ => {}
+            ExecutionEvent::Text { content } => {
+                text.push(content.clone());
+                events.push(ExecutionEvent::Text { content });
+            }
+            ExecutionEvent::Error { message } => {
+                events.push(ExecutionEvent::Error {
+                    message: message.clone(),
+                });
+                return Err(message);
+            }
+            ExecutionEvent::Complete => {
+                events.push(ExecutionEvent::Complete);
+                break;
+            }
+            other => events.push(other),
         }
     }
     handle
         .await
         .map_err(|e| e.to_string())?
         .map_err(|e| e.to_string())?;
-    Ok(text.join("\n\n").trim().to_string())
+    Ok((text.join("\n\n").trim().to_string(), events))
 }
 
 fn build_function_graph(cells: &[TronCell], project_path: &Path) -> Result<FunctionGraph, String> {
@@ -948,14 +1056,16 @@ fn build_function_graph(cells: &[TronCell], project_path: &Path) -> Result<Funct
                 continue;
             }
             let (name, body) = parse_run_function(&cell.content, index);
-            functions.entry(name.clone()).or_insert_with(|| TronFunction {
-                body,
-                context: vec![format!(
-                    "Context from referenced .tron file {}:\n{}",
-                    path.display(),
-                    file_context.join("\n\n")
-                )],
-            });
+            functions
+                .entry(name.clone())
+                .or_insert_with(|| TronFunction {
+                    body,
+                    context: vec![format!(
+                        "Context from referenced .tron file {}:\n{}",
+                        path.display(),
+                        file_context.join("\n\n")
+                    )],
+                });
         }
     }
 
@@ -1013,7 +1123,9 @@ fn build_execution_plan(graph: &FunctionGraph) -> Result<Vec<Vec<String>>, Strin
         visiting.pop();
         let depth = max_child + 1;
         if depth > 5 {
-            return Err(format!("Reference tree is deeper than 5 levels near {name}."));
+            return Err(format!(
+                "Reference tree is deeper than 5 levels near {name}."
+            ));
         }
         depths.insert(name.to_string(), depth);
         needed.insert(name.to_string());
@@ -1036,10 +1148,7 @@ fn parse_run_function(content: &str, index: usize) -> (String, String) {
     let mut lines = content.lines().collect::<Vec<_>>();
     if let Some(first) = lines.first() {
         if first.starts_with(RUN_NAME_PREFIX) {
-            let name = first
-                .trim_start_matches(RUN_NAME_PREFIX)
-                .trim()
-                .to_string();
+            let name = first.trim_start_matches(RUN_NAME_PREFIX).trim().to_string();
             lines.remove(0);
             let body = lines.join("\n").trim().to_string();
             if !name.is_empty() {
@@ -1062,7 +1171,9 @@ fn extract_known_function_refs(content: &str, names: &[String], self_name: &str)
     let mut out = names
         .iter()
         .filter(|name| name.as_str() != self_name)
-        .filter(|name| content.contains(&format!("@{name}")) || content.contains(&format!("#{name}")))
+        .filter(|name| {
+            content.contains(&format!("@{name}")) || content.contains(&format!("#{name}"))
+        })
         .cloned()
         .collect::<Vec<_>>();
     out.sort();
@@ -1103,10 +1214,84 @@ fn project_tron_cells(project_path: &Path) -> Result<Vec<(PathBuf, Vec<TronCell>
     Ok(out)
 }
 
+fn update_blackboard_notes(blackboard: &mut serde_json::Value, response: &str, source: &str) {
+    let summary = summarize_run_note(response);
+    if summary.is_empty() {
+        return;
+    }
+    if !blackboard.is_object() {
+        *blackboard = serde_json::json!({});
+    }
+    let Some(obj) = blackboard.as_object_mut() else {
+        return;
+    };
+    let notes = obj
+        .entry("notes")
+        .or_insert_with(|| serde_json::Value::Array(Vec::new()));
+    if !notes.is_array() {
+        *notes = serde_json::Value::Array(Vec::new());
+    }
+    let Some(items) = notes.as_array_mut() else {
+        return;
+    };
+    items.insert(
+        0,
+        serde_json::json!({
+            "id": format!("note-{}", Utc::now().timestamp_millis()),
+            "source": source,
+            "summary": summary,
+            "created_at": now(),
+            "tags": ["run"]
+        }),
+    );
+    items.truncate(10);
+}
+
+fn run_log_path(tron_path: Option<&str>, project_path: &str) -> PathBuf {
+    let root = PathBuf::from(project_path);
+    let stem = tron_path
+        .and_then(|path| Path::new(path).file_stem())
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("run");
+    root.join(".scriptron").join("run-logs").join(format!(
+        "{}-{}.jsonl",
+        safe_name(stem),
+        Utc::now().timestamp_millis()
+    ))
+}
+
+async fn write_run_log(path: &Path, events: &[ExecutionEvent]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
+    let mut lines = String::new();
+    for event in events {
+        let value = serde_json::to_value(event).map_err(|e| e.to_string())?;
+        lines.push_str(&serde_json::to_string(&value).map_err(|e| e.to_string())?);
+        lines.push('\n');
+    }
+    tokio::fs::write(path, lines)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+fn summarize_run_note(response: &str) -> String {
+    let compact = response
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    compact.chars().take(500).collect::<String>()
+}
+
 async fn ensure_workspace_layout(workspace_dir: &Path) -> anyhow::Result<()> {
     tokio::fs::create_dir_all(workspace_dir.join(".register")).await?;
     tokio::fs::create_dir_all(workspace_dir.join(".skills")).await?;
     tokio::fs::create_dir_all(workspace_dir.join(".tronhub")).await?;
+    rebuild_skill_index(workspace_dir).await?;
 
     let troner_path = workspace_dir.join(".troner.json");
     if !troner_path.exists() {
@@ -1233,16 +1418,25 @@ async fn install_tronhub_entry(workspace_dir: &Path, kind: &str, name: &str) -> 
         let manifest = target_dir.join("manifest.json");
         let needs_generate = if manifest.exists() {
             // Regenerate if the stored command is not an executable file.
-            let raw = tokio::fs::read_to_string(&manifest).await.unwrap_or_default();
+            let raw = tokio::fs::read_to_string(&manifest)
+                .await
+                .unwrap_or_default();
             serde_json::from_str::<serde_json::Value>(&raw)
                 .ok()
-                .and_then(|j| j.get("command").and_then(|v| v.as_str()).map(str::to_string))
+                .and_then(|j| {
+                    j.get("command")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                })
                 .map(|cmd| {
                     let p = std::path::Path::new(&cmd);
-                    !p.exists() || p.metadata().map(|m| {
-                        use std::os::unix::fs::PermissionsExt;
-                        m.permissions().mode() & 0o111 == 0
-                    }).unwrap_or(true)
+                    !p.exists()
+                        || p.metadata()
+                            .map(|m| {
+                                use std::os::unix::fs::PermissionsExt;
+                                m.permissions().mode() & 0o111 == 0
+                            })
+                            .unwrap_or(true)
                 })
                 .unwrap_or(true)
         } else {
@@ -1288,6 +1482,167 @@ async fn list_installed_skills(workspace_dir: &Path) -> anyhow::Result<Vec<Skill
     }
     skills.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(skills)
+}
+
+async fn rebuild_skill_index(workspace_dir: &Path) -> anyhow::Result<Vec<SkillIndexEntry>> {
+    let skill_dir = workspace_dir.join(".skills");
+    tokio::fs::create_dir_all(&skill_dir).await?;
+    let mut index = Vec::new();
+    let mut rd = tokio::fs::read_dir(&skill_dir).await?;
+    while let Some(entry) = rd.next_entry().await? {
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        if let Some(card) = read_skill_index_entry(&path).await? {
+            index.push(card);
+        }
+    }
+    index.sort_by(|a, b| a.name.cmp(&b.name));
+    tokio::fs::write(
+        skill_dir.join("index.json"),
+        serde_json::to_string_pretty(&index)?,
+    )
+    .await?;
+    Ok(index)
+}
+
+async fn read_skill_index_entry(path: &Path) -> anyhow::Result<Option<SkillIndexEntry>> {
+    let manifest = path.join("skill.json");
+    if !manifest.exists() {
+        return Ok(None);
+    }
+    let raw = tokio::fs::read_to_string(&manifest).await?;
+    let json: serde_json::Value = serde_json::from_str(&raw)?;
+    let name = json
+        .get("name")
+        .and_then(|v| v.as_str())
+        .or_else(|| path.file_name().and_then(|v| v.to_str()))
+        .unwrap_or_default()
+        .to_string();
+    let description = json
+        .get("description")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let required_clis = json
+        .pointer("/requires/clis")
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    item.get("name")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let capabilities = json
+        .get("capabilities")
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let tags = json
+        .get("tags")
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let document = skill_index_document(&name, &description, &required_clis, &capabilities, &tags);
+    let tokens = tokenize_skill_index_document(&document);
+    Ok(Some(SkillIndexEntry {
+        name,
+        description,
+        path: path.to_string_lossy().into_owned(),
+        required_clis,
+        capabilities,
+        tags,
+        document,
+        tokens,
+    }))
+}
+
+async fn install_skill_tool_adapters(workspace_dir: &Path, skill_name: &str) -> anyhow::Result<()> {
+    let skill_dir = workspace_dir.join(".skills").join(safe_name(skill_name));
+    for folder in ["tools", "clis"] {
+        let adapter_root = skill_dir.join(folder);
+        if !adapter_root.exists() {
+            continue;
+        }
+        let mut rd = tokio::fs::read_dir(&adapter_root).await?;
+        while let Some(entry) = rd.next_entry().await? {
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let adapter_name = entry.file_name().to_string_lossy().into_owned();
+            let target = workspace_dir
+                .join(".register")
+                .join(safe_name(&adapter_name));
+            if target.exists() {
+                tokio::fs::remove_dir_all(&target).await?;
+            }
+            copy_dir_all(&path, &target).await?;
+            let manifest = target.join("manifest.json");
+            if !manifest.exists() {
+                let generated = generated_cli_manifest("cli", &adapter_name, &target);
+                tokio::fs::write(manifest, serde_json::to_string_pretty(&generated)?).await?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn skill_index_document(
+    name: &str,
+    description: &str,
+    required_clis: &[String],
+    capabilities: &[String],
+    tags: &[String],
+) -> String {
+    format!(
+        "{} {} {} {} {}",
+        name,
+        description,
+        tags.join(" "),
+        capabilities.join(" "),
+        required_clis.join(" ")
+    )
+    .to_lowercase()
+}
+
+fn tokenize_skill_index_document(text: &str) -> Vec<String> {
+    let lower = text.to_lowercase();
+    let mut tokens = lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|term| term.len() >= 2)
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let chars = lower.chars().filter(|ch| is_cjk(*ch)).collect::<Vec<_>>();
+    for window in chars.windows(2) {
+        tokens.push(window.iter().collect());
+    }
+    for window in chars.windows(3) {
+        tokens.push(window.iter().collect());
+    }
+    tokens
+}
+
+fn is_cjk(ch: char) -> bool {
+    ('\u{4e00}'..='\u{9fff}').contains(&ch)
+        || ('\u{3400}'..='\u{4dbf}').contains(&ch)
+        || ('\u{3040}'..='\u{30ff}').contains(&ch)
 }
 
 async fn read_manifest_json(path: &Path) -> anyhow::Result<Option<String>> {
@@ -1384,6 +1739,14 @@ fn installed_kind_dir(workspace_dir: &Path, kind: &str) -> PathBuf {
     match kind {
         "skill" | "skills" => workspace_dir.join(".skills"),
         _ => workspace_dir.join(".register"),
+    }
+}
+
+fn plugin_runtime_path() -> String {
+    let base = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+    match std::env::var("PATH") {
+        Ok(existing) if !existing.is_empty() => format!("{base}:{existing}"),
+        _ => base.to_string(),
     }
 }
 
@@ -1668,6 +2031,60 @@ fn format_agent_event(event: &ExecutionEvent) -> Option<String> {
                 None
             } else {
                 Some(content.trim().to_string())
+            }
+        }
+        ExecutionEvent::Plan { content } => {
+            if content.trim().is_empty() {
+                None
+            } else {
+                Some(format!("Plan:\n{}", content.trim()))
+            }
+        }
+        ExecutionEvent::StepStarted {
+            step_id,
+            tool,
+            args,
+        } => Some(format!(
+            "Step `{}` started: `{}` with `{}`",
+            step_id,
+            tool,
+            compact_json(args)
+        )),
+        ExecutionEvent::StepRetried {
+            step_id,
+            tool,
+            attempt,
+            decision,
+            reason,
+        } => Some(format!(
+            "Step `{}` retry {} for `{}`: {} ({})",
+            step_id, attempt, tool, decision, reason
+        )),
+        ExecutionEvent::StepCompleted {
+            step_id,
+            tool,
+            output,
+        } => Some(format!(
+            "Step `{}` completed: `{}`\n{}",
+            step_id,
+            tool,
+            output.trim()
+        )),
+        ExecutionEvent::StepFailed {
+            step_id,
+            tool,
+            error,
+        } => Some(format!(
+            "Step `{}` failed: `{}`\n{}",
+            step_id,
+            tool,
+            error.trim()
+        )),
+        ExecutionEvent::SkillSelected { skills } => {
+            if skills.is_empty() {
+                None
+            } else {
+                Some(format!("Selected skills: {}", skills.join(", ")))
             }
         }
         ExecutionEvent::ToolCall { tool, args } => {

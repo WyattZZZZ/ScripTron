@@ -58,6 +58,11 @@ impl ProcessConfig {
         self.timeout_secs = secs;
         self
     }
+
+    pub fn with_env(mut self, key: impl Into<String>, value: impl Into<String>) -> Self {
+        self.env.push((key.into(), value.into()));
+        self
+    }
 }
 
 /// The result of running a process.

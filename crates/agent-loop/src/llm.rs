@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use cli_registry::ToolManifest;
+use cli_registry::{CliKind, ToolManifest};
 use process_runner::{ProcessConfig, ProcessRunner};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -71,13 +71,9 @@ impl LlmProvider for CliModelProvider {
         _max_tokens: u32,
     ) -> Result<LlmResponse, String> {
         let prompt = build_cli_model_prompt(system, messages, tools);
-        let output = run_generic_model_cli(
-            &self.manifest.command,
-            &self.project_path,
-            &prompt,
-            &self.runner,
-        )
-        .await?;
+        let output =
+            run_generic_model_cli(&self.manifest, &self.project_path, &prompt, &self.runner)
+                .await?;
 
         Ok(LlmResponse {
             content: vec![serde_json::json!({"type": "text", "text": output})],
@@ -87,23 +83,87 @@ impl LlmProvider for CliModelProvider {
 }
 
 async fn run_generic_model_cli(
-    command: &str,
+    manifest: &ToolManifest,
     project_path: &PathBuf,
     prompt: &str,
     runner: &ProcessRunner,
 ) -> Result<String, String> {
+    let args = model_cli_args(manifest, prompt);
     let result = runner
         .run(
-            ProcessConfig::new(command, vec![prompt.to_string()])
+            ProcessConfig::new(&manifest.command, args.clone())
                 .with_working_dir(project_path.clone())
-                .with_timeout(180),
+                .with_timeout(180)
+                .with_env("PATH", plugin_runtime_path()),
         )
         .await
         .map_err(|e| e.to_string())?;
-    if !result.success() {
-        return Err(result.combined_output());
+
+    if result.success() {
+        return Ok(result.combined_output());
     }
-    Ok(result.combined_output())
+
+    let combined = result.combined_output();
+    if should_retry_direct_prompt(&combined, &args) {
+        let fallback = runner
+            .run(
+                ProcessConfig::new(&manifest.command, vec![prompt.to_string()])
+                    .with_working_dir(project_path.clone())
+                    .with_timeout(180)
+                    .with_env("PATH", plugin_runtime_path()),
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+        if fallback.success() {
+            return Ok(fallback.combined_output());
+        }
+        return Err(fallback.combined_output());
+    }
+
+    Err(combined)
+}
+
+fn model_cli_args(manifest: &ToolManifest, prompt: &str) -> Vec<String> {
+    let schema_names: Vec<&str> = manifest
+        .args_schema
+        .iter()
+        .map(|arg| arg.name.as_str())
+        .collect();
+
+    if manifest.kind == CliKind::Model || schema_names.contains(&"action") {
+        return vec![
+            "--action".into(),
+            "chat".into(),
+            "--prompt".into(),
+            prompt.into(),
+        ];
+    }
+
+    if schema_names.contains(&"prompt") {
+        return vec!["--prompt".into(), prompt.into()];
+    }
+
+    if schema_names.contains(&"input") {
+        return vec!["--input".into(), prompt.into()];
+    }
+
+    vec![prompt.into()]
+}
+
+fn should_retry_direct_prompt(output: &str, args: &[String]) -> bool {
+    args.iter()
+        .any(|arg| arg == "--action" || arg == "--prompt")
+        && (output.contains("Unknown parameter")
+            || output.contains("unrecognized option")
+            || output.contains("unexpected argument"))
+}
+
+fn plugin_runtime_path() -> String {
+    let base = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
+    match std::env::var("PATH") {
+        Ok(existing) if !existing.is_empty() => format!("{base}:{existing}"),
+        _ => base.to_string(),
+    }
 }
 
 fn build_cli_model_prompt(

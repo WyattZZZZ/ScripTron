@@ -252,12 +252,19 @@ async fn dispatch(request: RpcRequest) -> Result<Value, String> {
                     .map_err(|e| e.to_string())?;
             let project_path = required_string(&request.params, "project_path")?;
             let blackboard = request.params.get("blackboard").cloned();
-            let events = core.run_tron_task(cells, project_path, blackboard).await?;
-            let queued = events.len();
-            for event in events {
+            let tron_path = request
+                .params
+                .get("path")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            let result = core
+                .run_tron_task_preview(cells, project_path, blackboard, tron_path)
+                .await?;
+            let queued = result.events.len();
+            for event in result.events {
                 enqueue_event(serde_json::to_value(event).map_err(|e| e.to_string())?);
             }
-            Ok(json!({ "queued": queued }))
+            Ok(json!({ "queued": queued, "blackboard": result.blackboard }))
         }
         "poll_events" => {
             let mut queue = event_queue().lock();

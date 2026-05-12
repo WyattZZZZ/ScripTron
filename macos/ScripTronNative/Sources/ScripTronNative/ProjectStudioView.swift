@@ -1820,8 +1820,8 @@ private struct RunInlineBlock: View {
                     .padding(10)
                     .background(Color.surfaceSoft.opacity(0.58))
             }
-            if model.runEventsBlockID == block.id {
-                RunEventsPanel()
+            if !model.runEvents(for: block).isEmpty {
+                RunEventsPanel(block: block)
                     .environmentObject(model)
                     .padding(12)
                     .background(Color.surfaceSoft.opacity(0.40))
@@ -1862,34 +1862,77 @@ private struct RunInlineBlock: View {
 
 private struct RunEventsPanel: View {
     @EnvironmentObject private var model: AppModel
+    let block: AppModel.DocumentBlock
+    @State private var showLog = false
+
+    private var events: [RunEvent] {
+        model.runEvents(for: block)
+    }
 
     private var responseEvents: [RunEvent] {
-        model.runEvents.filter { $0.type == "text" }
+        events.filter { $0.type == "text" }
+    }
+
+    private var logEvents: [RunEvent] {
+        events.filter { $0.type != "text" && $0.type != "complete" }
     }
 
     var body: some View {
-        if !responseEvents.isEmpty {
+        if !responseEvents.isEmpty || !logEvents.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
-                Text(model.tr("Response", "响应"))
-                    .font(.system(size: 12, weight: .bold))
-                    .foregroundStyle(Color.appSecondaryText)
-                ForEach(responseEvents) { event in
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack {
-                            Text(model.tr("RESPONSE", "响应"))
-                                .font(.system(size: 10, weight: .bold))
-                                .foregroundStyle(Color.primaryGreen)
-                            Spacer()
-                        }
-                        if let text = eventText(event) {
-                            RunResponseMarkdownView(
-                                markdown: text,
-                                basePath: model.activeProjectPath ?? model.workspacePath
-                            )
+                HStack {
+                    Text(model.tr("Response", "响应"))
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Color.appSecondaryText)
+                    Spacer()
+                    Button {
+                        showLog.toggle()
+                    } label: {
+                        Label(model.tr("Run Log", "运行日志"), systemImage: showLog ? "chevron.up" : "list.bullet.rectangle")
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .bold))
+                    .foregroundStyle(Color.primaryGreen)
+                }
+                if !responseEvents.isEmpty {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(responseEvents) { event in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack {
+                                        Text(model.tr("RESPONSE", "响应"))
+                                            .font(.system(size: 10, weight: .bold))
+                                            .foregroundStyle(Color.primaryGreen)
+                                        Spacer()
+                                    }
+                                    if let text = eventText(event) {
+                                        RunResponseMarkdownView(
+                                            markdown: text,
+                                            basePath: model.activeProjectPath ?? model.workspacePath
+                                        )
+                                    }
+                                }
+                                .padding(10)
+                                .background(Color.surfaceSoft.opacity(0.72), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                            }
                         }
                     }
-                    .padding(10)
-                    .background(Color.surfaceSoft.opacity(0.72), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    .frame(maxHeight: 260)
+                }
+                if showLog {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(logEvents) { event in
+                                Text(logText(event))
+                                    .font(.system(size: 11, design: .monospaced))
+                                    .foregroundStyle(Color.appSecondaryText)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .padding(8)
+                                    .background(.white.opacity(0.62), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                            }
+                        }
+                    }
+                    .frame(maxHeight: 220)
                 }
             }
             .padding(.vertical, 12)
@@ -1906,6 +1949,42 @@ private struct RunEventsPanel: View {
             }
         }
         return nil
+    }
+
+    private func logText(_ event: RunEvent) -> String {
+        switch event.type {
+        case "plan":
+            return "PLAN\n\(eventText(event) ?? "")"
+        case "skill_selected":
+            return "SKILLS \(event.skills?.joined(separator: ", ") ?? "")"
+        case "tool_call":
+            return "TOOL \(event.tool ?? "")\nARGS \(jsonText(event.args?.value))"
+        case "tool_result":
+            return "\(event.success == false ? "FAILED" : "RESULT") \(event.tool ?? "")\n\(event.output ?? eventText(event) ?? "")"
+        case "step_started":
+            return "STEP START \(event.step_id ?? "") \(event.tool ?? "")\nARGS \(jsonText(event.args?.value))"
+        case "step_retried":
+            return "STEP RETRY \(event.step_id ?? "") attempt \(event.attempt ?? 0)\n\(event.decision ?? ""): \(event.reason ?? "")"
+        case "step_completed":
+            return "STEP DONE \(event.step_id ?? "") \(event.tool ?? "")\n\(event.output ?? "")"
+        case "step_failed":
+            return "STEP FAILED \(event.step_id ?? "") \(event.tool ?? "")\n\(event.error ?? "")"
+        case "thinking":
+            return "THINKING\n\(eventText(event) ?? "")"
+        case "error":
+            return "ERROR\n\(event.error ?? eventText(event) ?? "")"
+        default:
+            return "\(event.type)\n\(eventText(event) ?? "")"
+        }
+    }
+
+    private func jsonText(_ value: Any?) -> String {
+        guard let value, !(value is NSNull),
+              let data = try? JSONSerialization.data(withJSONObject: value, options: []),
+              let text = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return text
     }
 }
 

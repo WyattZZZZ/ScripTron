@@ -1,0 +1,12 @@
+{
+  "name": "example-model-provider",
+  "kind": "model",
+  "command": "./run.sh",
+  "provider": "example",
+  "supports": {
+    "chat": true,
+    "oauth": true,
+    "markdown_response": true,
+    "media_response": true
+  }
+}

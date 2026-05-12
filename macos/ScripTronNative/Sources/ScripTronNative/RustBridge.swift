@@ -59,11 +59,74 @@ struct RunEvent: Identifiable, Decodable {
     let type: String
     let content: AnyCodable?
     let tool: String?
+    let args: AnyCodable?
+    let output: String?
+    let success: Bool?
+    let step_id: String?
+    let attempt: Int?
+    let decision: String?
+    let reason: String?
+    let error: String?
+    let skills: [String]?
+
+    static func local(type: String, content: String) -> RunEvent {
+        RunEvent(
+            type: type,
+            content: AnyCodable(content),
+            tool: nil,
+            args: nil,
+            output: nil,
+            success: nil,
+            step_id: nil,
+            attempt: nil,
+            decision: nil,
+            reason: nil,
+            error: nil,
+            skills: nil
+        )
+    }
+
+    init(
+        type: String,
+        content: AnyCodable?,
+        tool: String?,
+        args: AnyCodable?,
+        output: String?,
+        success: Bool?,
+        step_id: String?,
+        attempt: Int?,
+        decision: String?,
+        reason: String?,
+        error: String?,
+        skills: [String]?
+    ) {
+        self.type = type
+        self.content = content
+        self.tool = tool
+        self.args = args
+        self.output = output
+        self.success = success
+        self.step_id = step_id
+        self.attempt = attempt
+        self.decision = decision
+        self.reason = reason
+        self.error = error
+        self.skills = skills
+    }
 
     enum CodingKeys: String, CodingKey {
         case type
         case content
         case tool
+        case args
+        case output
+        case success
+        case step_id
+        case attempt
+        case decision
+        case reason
+        case error
+        case skills
     }
 }
 

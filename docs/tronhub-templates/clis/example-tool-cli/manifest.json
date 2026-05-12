@@ -1,0 +1,31 @@
+{
+  "name": "example-tool-cli",
+  "kind": "tool",
+  "description": "Example TronHub tool CLI package.",
+  "version": "0.1.0",
+  "command": "./run.sh",
+  "args_schema": [
+    {
+      "name": "action",
+      "description": "Action to run: run, login, or version.",
+      "required": true,
+      "type": "string"
+    },
+    {
+      "name": "input",
+      "description": "Task payload, file path, or natural-language instruction.",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "name": "project_path",
+      "description": "Optional ScripTron project path.",
+      "required": false,
+      "type": "string"
+    }
+  ],
+  "examples": [
+    "./run.sh --action version",
+    "./run.sh --action run --input \"Format report.csv\""
+  ]
+}

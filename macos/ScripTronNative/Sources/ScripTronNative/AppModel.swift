@@ -137,6 +137,8 @@ final class AppModel: ObservableObject {
     @Published var isDirty = false
     @Published var newScriptName = "untitled"
     @Published var runEvents: [RunEvent] = []
+    @Published var runEventsByBlockID: [UUID: [RunEvent]] = [:]
+    @Published var runEventsByBlockKey: [String: [RunEvent]] = [:]
     @Published var runEventsBlockID: UUID?
     @Published var isRunningTask = false
     @Published var selectedDocumentBlockIDs = Set<UUID>()
@@ -917,6 +919,20 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func runEvents(for block: DocumentBlock) -> [RunEvent] {
+        if let events = runEventsByBlockID[block.id], !events.isEmpty {
+            return events
+        }
+        return runEventsByBlockKey[runEventKey(for: block)] ?? []
+    }
+
+    private func runEventKey(for block: DocumentBlock) -> String {
+        let filePath = selectedFile?.path ?? activeTabPath ?? ""
+        let name = block.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let identity = name.isEmpty ? block.content.trimmingCharacters(in: .whitespacesAndNewlines) : name
+        return "\(filePath)#\(identity)"
+    }
+
     func toggleFolder(_ folder: FileEntry) {
         guard folder.is_dir else { return }
         if expandedFolders.contains(folder.path) {
@@ -1563,6 +1579,14 @@ final class AppModel: ObservableObject {
         runEventsBlockID = block?.id
         status = "Running task"
         runEvents = []
+        let blockKey = block.map { runEventKey(for: $0) }
+        if let block {
+            let startEvent = RunEvent.local(type: "warning", content: "Run started. Waiting for model and tools...")
+            runEventsByBlockID[block.id] = [startEvent]
+            if let blockKey {
+                runEventsByBlockKey[blockKey] = [startEvent]
+            }
+        }
         let bridge = bridge
         let taskCells = Self.cells(from: documentBlocks)
         guard let cellsData = try? JSONEncoder().encode(taskCells),
@@ -1573,18 +1597,39 @@ final class AppModel: ObservableObject {
             return
         }
         let projectPath = projectRootPath
+        let filePath = file.path
         Task.detached(priority: .userInitiated) {
             do {
                 let decodedCells = try JSONDecoder().decode([TronCell].self, from: cellsData)
                 let blackboard = try JSONSerialization.jsonObject(with: blackboardData)
                 try bridge.callVoid("run_task_preview", params: [
+                    "path": filePath,
                     "cells": decodedCells.map { ["run": $0.run, "content": $0.content] },
                     "project_path": projectPath,
                     "blackboard": blackboard
                 ])
                 let events = try bridge.call("poll_events", as: [RunEvent].self)
+                let refreshedFile = try? bridge.call("open_tron_file", params: ["path": filePath], as: TronFile.self)
                 await MainActor.run {
+                    if let refreshedFile {
+                        self.selectedFile = refreshedFile
+                        if let activeTabPath = self.activeTabPath {
+                            self.tronTabStates[activeTabPath] = TronTabState(
+                                file: refreshedFile,
+                                draftCells: self.draftCells,
+                                documentBlocks: self.documentBlocks,
+                                dirty: false
+                            )
+                        }
+                    }
                     self.runEvents = events
+                    if let block {
+                        self.runEventsByBlockID[block.id] = events
+                        if let blockKey {
+                            self.runEventsByBlockKey[blockKey] = events
+                        }
+                    }
+                    self.clearActiveTabDirty()
                     self.status = "Run complete"
                     self.isRunningTask = false
                 }
