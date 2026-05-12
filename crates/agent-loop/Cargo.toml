@@ -11,6 +11,7 @@ tokio = { workspace = true }
 reqwest = { workspace = true }
 anyhow = { workspace = true }
 uuid = { workspace = true }
+hermes = { path = "../hermes" }
 cli-registry = { path = "../cli-registry" }
 process-runner = { path = "../process-runner" }
 tron-parser = { path = "../tron-parser" }

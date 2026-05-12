@@ -152,15 +152,7 @@ impl AgentLoop {
         if task.instructions.is_empty() {
             return Err(AgentError::NoInstructions);
         }
-
-        let registry = self.registry.read().await;
-        let tools = build_tools(&registry);
         let skill_cards = recall_skill_cards(&task.project_path, &task).await;
-        let planner_system =
-            build_planner_system_prompt(&registry, &task.project_path, &tools, &skill_cards);
-        let executor_system =
-            build_executor_system_prompt(&registry, &task.project_path, &tools, &skill_cards);
-        drop(registry);
         if !skill_cards.is_empty() {
             let _ = tx
                 .send(ExecutionEvent::SkillSelected {
@@ -169,199 +161,52 @@ impl AgentLoop {
                 .await;
         }
 
-        // Combine run:true cells, static document context, and blackboard into one user turn.
-        let mut user_sections = Vec::new();
-        if !task.context.is_empty() {
-            user_sections.push(format!(
-                "Document context from non-run markdown:\n{}",
-                task.context.join("\n\n---\n\n")
-            ));
-        }
-        if !task.blackboard.is_null()
-            && !(task.blackboard.is_object()
-                && task
-                    .blackboard
-                    .as_object()
-                    .map(|o| o.is_empty())
-                    .unwrap_or(false))
-        {
-            user_sections.push(format!(
-                "Hidden .tron blackboard state:\n{}",
-                serde_json::to_string_pretty(&task.blackboard).unwrap_or_else(|_| "{}".into())
-            ));
-        }
-        user_sections.push(format!(
-            "Run instructions:\n{}",
-            task.instructions.join("\n\n---\n\n")
-        ));
-        let user_content = user_sections.join("\n\n====\n\n");
-
-        // Phase 1: planner. The planner receives the full first-step context and the
-        // full deterministic tool inventory, but it does not receive callable tools.
-        let planner_messages: Vec<llm::ChatMessage> = vec![llm::ChatMessage {
-            role: "user".into(),
-            content: serde_json::json!([{"type": "text", "text": user_content}]),
-        }];
-
-        let plan_response = self
-            .provider
-            .complete(&planner_system, &planner_messages, &[], 512)
-            .await
-            .map_err(|e| AgentError::Llm(e))?;
-        let plan = response_text(&plan_response.content);
-        let mut execution_trace = Vec::<String>::new();
-        if !plan.trim().is_empty() {
-            execution_trace.push(format!("Plan:\n{}", plan.trim()));
-            let _ = tx
-                .send(ExecutionEvent::Plan {
-                    content: plan.clone(),
-                })
-                .await;
-        }
-
-        // Phase 2: executor. The executor receives the plan, the original context,
-        // and the callable tools.
-        let executor_user_content = format!(
-            "Execution plan from planner:\n{}\n\n====\n\nOriginal request and context:\n{}",
-            if plan.trim().is_empty() {
-                "(Planner returned no explicit plan. Execute directly.)"
-            } else {
-                plan.trim()
-            },
-            user_content
+        let runtime = hermes::HermesRuntime::new(
+            Arc::new(LegacyProviderAdapter {
+                inner: self.provider.clone(),
+            }),
+            self.hermes_tool_registry(&task.project_path).await,
         );
-        let mut messages: Vec<llm::ChatMessage> = vec![llm::ChatMessage {
-            role: "user".into(),
-            content: serde_json::json!([{"type": "text", "text": executor_user_content}]),
-        }];
+        let request = hermes::RunRequest {
+            instructions: task.instructions,
+            context: task.context,
+            blackboard: task.blackboard,
+            project_path: Some(task.project_path),
+            memory: Some(hermes_memory_from_skill_cards(skill_cards)),
+        };
+        let events = runtime.run(request).await.map_err(|error| match error {
+            hermes::HermesError::NoInstructions => AgentError::NoInstructions,
+            hermes::HermesError::Model(message) => AgentError::Llm(message),
+            hermes::HermesError::Tool(message) => AgentError::ToolExec(message),
+            other => AgentError::Llm(other.to_string()),
+        })?;
 
-        const MAX_TURNS: usize = 30;
-        let mut turn = 0;
-
-        loop {
-            turn += 1;
-            if turn > MAX_TURNS {
-                let _ = tx
-                    .send(ExecutionEvent::Error {
-                        message: "Exceeded maximum turns (30). Stopping.".into(),
-                    })
-                    .await;
-                break;
-            }
-
-            let response = self
-                .provider
-                .complete(&executor_system, &messages, &tools, 4096)
-                .await
-                .map_err(|e| AgentError::Llm(e))?;
-
-            // Emit text blocks as Thinking / Text events
-            let mut has_tool_use = false;
-            let mut tool_results: Vec<serde_json::Value> = Vec::new();
-
-            for block in &response.content {
-                let block_type = block["type"].as_str().unwrap_or("");
-                match block_type {
-                    "text" => {
-                        let text = block["text"].as_str().unwrap_or("").to_string();
-                        if !text.trim().is_empty() {
-                            let _ = tx.send(ExecutionEvent::Thinking { content: text }).await;
-                        }
-                    }
-                    "tool_use" => {
-                        has_tool_use = true;
-                        let tool_name = block["name"].as_str().unwrap_or("").to_string();
-                        let tool_id = block["id"].as_str().unwrap_or("").to_string();
-                        let input = block["input"].clone();
-
-                        let _ = tx
-                            .send(ExecutionEvent::ToolCall {
-                                tool: tool_name.clone(),
-                                args: input.clone(),
-                            })
-                            .await;
-                        execution_trace.push(format!(
-                            "Tool call: {}\nArgs: {}",
-                            tool_name,
-                            compact_json(&input)
-                        ));
-
-                        let output = self
-                            .dispatch_tool_with_retry(
-                                &tool_name,
-                                &input,
-                                &task.project_path,
-                                &executor_system,
-                                &tools,
-                                &messages,
-                                &tx,
-                            )
-                            .await;
-
-                        let success = !output.starts_with("Error:");
-                        execution_trace.push(format!(
-                            "Tool result: {}\nSuccess: {}\nOutput:\n{}",
-                            tool_name, success, output
-                        ));
-                        let _ = tx
-                            .send(ExecutionEvent::ToolResult {
-                                tool: tool_name.clone(),
-                                output: output.clone(),
-                                success,
-                            })
-                            .await;
-
-                        tool_results.push(serde_json::json!({
-                            "type": "tool_result",
-                            "tool_use_id": tool_id,
-                            "content": output,
-                        }));
-                    }
-                    _ => {}
-                }
-            }
-
-            // Append the assistant turn to history
-            messages.push(llm::ChatMessage {
-                role: "assistant".into(),
-                content: serde_json::Value::Array(response.content.clone()),
-            });
-
-            if has_tool_use && !tool_results.is_empty() {
-                // Feed tool results back and continue
-                messages.push(llm::ChatMessage {
-                    role: "user".into(),
-                    content: serde_json::Value::Array(tool_results),
-                });
-            } else {
-                // No tool use → we're done
-                let executor_text = response_text(&response.content);
-                if !executor_text.trim().is_empty() {
-                    execution_trace.push(format!("Executor final text:\n{}", executor_text.trim()));
-                }
-                let final_text = self
-                    .synthesize_final_response(
-                        &task,
-                        &plan,
-                        &user_content,
-                        &execution_trace,
-                        &executor_text,
-                    )
-                    .await
-                    .unwrap_or_else(|_| concise_fallback_response(&executor_text));
-                if !final_text.trim().is_empty() {
-                    let _ = tx
-                        .send(ExecutionEvent::Text {
-                            content: final_text,
-                        })
-                        .await;
-                }
-                break;
+        for event in events {
+            if let Some(event) = legacy_event_from_hermes(event) {
+                let _ = tx.send(event).await;
             }
         }
-
-        let _ = tx.send(ExecutionEvent::Complete).await;
         Ok(())
+    }
+
+    async fn hermes_tool_registry(&self, project_path: &PathBuf) -> hermes::ToolRegistry {
+        let registry = self.registry.read().await;
+        let definitions = build_tools(&registry)
+            .into_iter()
+            .filter_map(hermes_tool_definition_from_json)
+            .collect::<Vec<_>>();
+        drop(registry);
+
+        let mut tools = hermes::ToolRegistry::new();
+        for definition in definitions {
+            tools.register(ScriptronToolExecutor {
+                definition,
+                registry: self.registry.clone(),
+                project_path: project_path.clone(),
+                runner: ProcessRunner::new(),
+            });
+        }
+        tools
     }
 
     async fn dispatch_tool(
@@ -694,6 +539,259 @@ fn concise_fallback_response(text: &str) -> String {
         "(completed without a final response)".into()
     } else {
         compact.chars().take(1000).collect()
+    }
+}
+
+fn hermes_memory_from_skill_cards(skill_cards: Vec<SkillCard>) -> hermes::MemorySnapshot {
+    hermes::MemorySnapshot {
+        global: String::new(),
+        project: None,
+        skills: skill_cards
+            .into_iter()
+            .map(|skill| hermes::SkillMemory {
+                name: skill.name,
+                description: skill.description,
+                path: skill.path,
+            })
+            .collect(),
+        ..Default::default()
+    }
+}
+
+fn legacy_event_from_hermes(event: hermes::RunEvent) -> Option<ExecutionEvent> {
+    match event {
+        hermes::RunEvent::Started => None,
+        hermes::RunEvent::Thinking { content } => Some(ExecutionEvent::Thinking { content }),
+        hermes::RunEvent::ToolCall { tool, args } => Some(ExecutionEvent::ToolCall { tool, args }),
+        hermes::RunEvent::ToolResult {
+            tool,
+            output,
+            success,
+        } => Some(ExecutionEvent::ToolResult {
+            tool,
+            output,
+            success,
+        }),
+        hermes::RunEvent::Text { content } => Some(ExecutionEvent::Text { content }),
+        hermes::RunEvent::Warning { message } => Some(ExecutionEvent::Warning { message }),
+        hermes::RunEvent::Error { message } => Some(ExecutionEvent::Error { message }),
+        hermes::RunEvent::Complete => Some(ExecutionEvent::Complete),
+    }
+}
+
+fn hermes_tool_definition_from_json(value: serde_json::Value) -> Option<hermes::ToolDefinition> {
+    Some(hermes::ToolDefinition {
+        name: value.get("name")?.as_str()?.to_string(),
+        description: value
+            .get("description")
+            .and_then(|description| description.as_str())
+            .unwrap_or_default()
+            .to_string(),
+        input_schema: value
+            .get("input_schema")
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({"type": "object"})),
+    })
+}
+
+fn hermes_block_to_legacy_json(block: &hermes::ContentBlock) -> serde_json::Value {
+    match block {
+        hermes::ContentBlock::Text { text } => {
+            serde_json::json!({"type": "text", "text": text})
+        }
+        hermes::ContentBlock::ToolUse { id, name, input } => {
+            serde_json::json!({"type": "tool_use", "id": id, "name": name, "input": input})
+        }
+        hermes::ContentBlock::ToolResult {
+            tool_use_id,
+            content,
+            ..
+        } => {
+            serde_json::json!({"type": "tool_result", "tool_use_id": tool_use_id, "content": content})
+        }
+    }
+}
+
+fn hermes_block_from_legacy_json(block: &serde_json::Value) -> Option<hermes::ContentBlock> {
+    match block
+        .get("type")
+        .and_then(|value| value.as_str())
+        .unwrap_or("")
+    {
+        "text" => Some(hermes::ContentBlock::Text {
+            text: block
+                .get("text")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_string(),
+        }),
+        "tool_use" => Some(hermes::ContentBlock::ToolUse {
+            id: block
+                .get("id")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            name: block
+                .get("name")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            input: block
+                .get("input")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!({})),
+        }),
+        _ => None,
+    }
+}
+
+fn legacy_messages_from_hermes(messages: &[hermes::Message]) -> Vec<llm::ChatMessage> {
+    messages
+        .iter()
+        .map(|message| llm::ChatMessage {
+            role: message.role.clone(),
+            content: serde_json::Value::Array(
+                message
+                    .content
+                    .iter()
+                    .map(hermes_block_to_legacy_json)
+                    .collect(),
+            ),
+        })
+        .collect()
+}
+
+fn legacy_tools_from_hermes(tools: &[hermes::ToolDefinition]) -> Vec<serde_json::Value> {
+    tools
+        .iter()
+        .map(|tool| {
+            serde_json::json!({
+                "name": tool.name,
+                "description": tool.description,
+                "input_schema": tool.input_schema,
+            })
+        })
+        .collect()
+}
+
+struct LegacyProviderAdapter {
+    inner: Arc<dyn LlmProvider + Send + Sync>,
+}
+
+#[async_trait::async_trait]
+impl hermes::ModelProvider for LegacyProviderAdapter {
+    async fn complete(
+        &self,
+        system: &str,
+        messages: &[hermes::Message],
+        tools: &[hermes::ToolDefinition],
+        max_tokens: u32,
+    ) -> Result<hermes::ModelResponse, hermes::HermesError> {
+        let messages = legacy_messages_from_hermes(messages);
+        let tools = legacy_tools_from_hermes(tools);
+        let response = self
+            .inner
+            .complete(system, &messages, &tools, max_tokens)
+            .await
+            .map_err(hermes::HermesError::Model)?;
+        Ok(hermes::ModelResponse {
+            content: response
+                .content
+                .iter()
+                .filter_map(hermes_block_from_legacy_json)
+                .collect(),
+            stop_reason: response.stop_reason,
+        })
+    }
+}
+
+struct ScriptronToolExecutor {
+    definition: hermes::ToolDefinition,
+    registry: Arc<tokio::sync::RwLock<CliRegistry>>,
+    project_path: PathBuf,
+    runner: ProcessRunner,
+}
+
+#[async_trait::async_trait]
+impl hermes::ToolExecutor for ScriptronToolExecutor {
+    fn definition(&self) -> hermes::ToolDefinition {
+        self.definition.clone()
+    }
+
+    async fn execute(
+        &self,
+        call: hermes::ToolCall,
+    ) -> Result<hermes::ToolOutput, hermes::HermesError> {
+        let output = match call.name.as_str() {
+            "list_files" => builtin_tools::list_files(&call.input, &self.project_path).await,
+            "read_file" => builtin_tools::read_file(&call.input, &self.project_path).await,
+            "write_file" | "create_file" => {
+                builtin_tools::write_file(&call.input, &self.project_path).await
+            }
+            "mkdir" => builtin_tools::create_dir(&call.input, &self.project_path).await,
+            "delete_path" => builtin_tools::delete_path(&call.input, &self.project_path).await,
+            "move_path" => builtin_tools::move_path(&call.input, &self.project_path).await,
+            "exec" | "run_command" => {
+                builtin_tools::run_command(&call.input, &self.project_path, &self.runner).await
+            }
+            "run_cli_tool" => {
+                let registry = self.registry.read().await;
+                run_cli_tool_with_registry(&call.input, &self.project_path, &registry, &self.runner)
+                    .await
+            }
+            _ => format!("Error: unknown tool '{}'", call.name),
+        };
+        Ok(hermes::ToolOutput {
+            tool_call_id: call.id,
+            tool_name: call.name,
+            success: !output.starts_with("Error:"),
+            output,
+        })
+    }
+}
+
+async fn run_cli_tool_with_registry(
+    input: &serde_json::Value,
+    project_path: &PathBuf,
+    registry: &CliRegistry,
+    runner: &ProcessRunner,
+) -> String {
+    let tool_name = match input["tool"].as_str() {
+        Some(n) => n,
+        None => return "Error: 'tool' field is required".into(),
+    };
+    let manifest = match registry.get_tool(tool_name) {
+        Some(m) => m.clone(),
+        None => return format!("Error: CLI tool '{}' is not installed", tool_name),
+    };
+
+    let args: Vec<String> = input["args"]
+        .as_array()
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    let working_dir = match input["working_dir"].as_str() {
+        Some(dir) => match project_relative_path(project_path, dir) {
+            Some(path) => path,
+            None => return "Error: working_dir must stay inside the project directory".into(),
+        },
+        None => project_path.clone(),
+    };
+
+    let cfg = ProcessConfig::new(manifest.command, args)
+        .with_working_dir(working_dir)
+        .with_env(
+            "PATH",
+            "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+        );
+
+    match runner.run(cfg).await {
+        Ok(result) => result.combined_output(),
+        Err(e) => format!("Error: {}", e),
     }
 }
 

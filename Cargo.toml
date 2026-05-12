@@ -5,6 +5,7 @@ members = [
     "crates/cli-registry",
     "crates/process-runner",
     "crates/agent-loop",
+    "crates/hermes",
     "crates/auth",
     "crates/scriptron-core",
     "crates/scriptron-ffi",
