@@ -2,10 +2,10 @@
 /node_modules
 /.env
 *.lock
-src-tauri/target
-ui/dist
+!Cargo.lock
 .DS_Store
 *.tsbuildinfo
 .claude/worktrees/
 macos/ScripTronNative/.swiftpm/
 macos/ScripTronNative/.build/
+macos/ScripTronNative/dist/

@@ -1,6 +1,5 @@
 [workspace]
 members = [
-    "src-tauri",
     "crates/tron-parser",
     "crates/cli-registry",
     "crates/process-runner",

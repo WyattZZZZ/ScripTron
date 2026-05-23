@@ -1,9 +1,0 @@
-{
-  "name": "example-tool-cli",
-  "kind": "tool",
-  "command": "./run.sh",
-  "capabilities": [
-    "local-file-operation",
-    "markdown-output"
-  ]
-}
