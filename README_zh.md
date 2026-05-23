@@ -119,19 +119,17 @@ macos/ScripTronNative              SwiftUI 应用（前端）
 crates/
 ├── scriptron-ffi                  C-ABI 动态库（libscriptron_ffi.dylib）
 │                                  C 字符串上的 JSON-RPC 派发
-├── scriptron-core                 业务逻辑（工作区、项目、Agent 运行、
-│                                  记忆、TronHub 安装）
-├── agent-loop                     多轮 LLM 工具调用循环。Provider 实现：
-│                                  Anthropic, Gemini, OpenAiCompat, CliModel
+├── scriptron-core                 Host 逻辑（工作区、项目、.tron 文件、
+│                                  blackboard、Hermes 迁移占位）
 ├── tron-parser                    .tron 文件解析
 ├── cli-registry                   .register/<name>/manifest.json 注册表
 ├── process-runner                 带超时的异步子进程
-├── auth                           多 Provider OAuth + API key + keychain
 └── scriptron-cli                  CLI 二进制（`scriptron project create` 等）
 ```
 
 Swift 端**只**通过 `RustBridge.swift` 调用 `scriptron_call(json_string)` 和 Rust
-通信，再解析 JSON 响应。所有业务逻辑都在 Rust 里。
+通信，再解析 JSON 响应。Agent runtime、模型、OAuth、工具、skills、审批、
+clarify 与多 Agent 能力将迁移到官方 Hermes Agent TUI Gateway。
 
 ### 磁盘上的工作区结构
 

@@ -21,6 +21,10 @@ let package = Package(
                     "-Xlinker", "../../target/debug"
                 ])
             ]
+        ),
+        .testTarget(
+            name: "ScripTronNativeTests",
+            dependencies: ["ScripTronNative"]
         )
     ]
 )

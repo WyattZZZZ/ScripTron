@@ -1,10 +1,4 @@
-use agent_loop::{
-    AgentLoop, AnthropicProvider, CliModelProvider, ExecutionEvent, GeminiProvider, LlmProvider,
-    OpenAiCompatProvider,
-};
-use auth::{all_provider_statuses, AppConfig, AuthManager, Credentials, Provider, ProviderStatus};
 use chrono::Utc;
-use cli_registry::{CliKind, CliRegistry, ToolManifest};
 use process_runner::{ProcessConfig, ProcessRunner};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -12,8 +6,8 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use tokio::sync::{mpsc, RwLock};
-use tron_parser::{TronCell, TronFile, TronTask};
+use tokio::sync::RwLock;
+use tron_parser::{TronCell, TronFile};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct TronFileDto {
@@ -34,6 +28,195 @@ pub struct FileEntry {
 pub struct ActiveConfig {
     pub provider: String,
     pub model: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProviderStatus {
+    pub provider: String,
+    pub display_name: String,
+    pub connected: bool,
+    pub auth_method: String,
+    pub available_models: Vec<String>,
+    pub default_model: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ArgType {
+    String,
+    Number,
+    Boolean,
+    Array,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArgSchema {
+    pub name: String,
+    pub description: String,
+    #[serde(default)]
+    pub required: bool,
+    #[serde(rename = "type")]
+    pub arg_type: ArgType,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum CliKind {
+    Tool,
+    Model,
+    Software,
+}
+
+impl Default for CliKind {
+    fn default() -> Self {
+        Self::Tool
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ToolManifest {
+    pub name: String,
+    #[serde(default)]
+    pub kind: CliKind,
+    pub description: String,
+    pub version: String,
+    pub command: String,
+    #[serde(default)]
+    pub args_schema: Vec<ArgSchema>,
+    #[serde(default)]
+    pub examples: Vec<String>,
+    #[serde(default)]
+    pub homepage: Option<String>,
+    #[serde(default)]
+    pub author: Option<String>,
+}
+
+#[derive(Debug, Default)]
+struct CliRegistry {
+    registry_dir: PathBuf,
+    tools: Vec<ToolManifest>,
+}
+
+impl CliRegistry {
+    async fn load(registry_dir: impl Into<PathBuf>) -> Result<Self, String> {
+        let dir = registry_dir.into();
+        if !dir.exists() {
+            tokio::fs::create_dir_all(&dir)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+
+        let mut tools = Vec::new();
+        let mut entries = tokio::fs::read_dir(&dir).await.map_err(|e| e.to_string())?;
+        while let Some(entry) = entries.next_entry().await.map_err(|e| e.to_string())? {
+            let manifest_path = entry.path().join("manifest.json");
+            if !manifest_path.exists() {
+                continue;
+            }
+            let raw = tokio::fs::read_to_string(&manifest_path)
+                .await
+                .map_err(|e| e.to_string())?;
+            let manifest = serde_json::from_str(&raw)
+                .map_err(|e| format!("JSON parse error in {}: {e}", manifest_path.display()))?;
+            tools.push(manifest);
+        }
+        tools.sort_by(|a: &ToolManifest, b| a.name.cmp(&b.name));
+        Ok(Self {
+            registry_dir: dir,
+            tools,
+        })
+    }
+
+    fn list_tools(&self) -> &[ToolManifest] {
+        &self.tools
+    }
+
+    fn get_tool(&self, name: &str) -> Option<&ToolManifest> {
+        self.tools.iter().find(|tool| tool.name == name)
+    }
+
+    async fn install_tool(&mut self, manifest: ToolManifest) -> Result<(), String> {
+        if self.tools.iter().any(|tool| tool.name == manifest.name) {
+            return Err(format!("Tool '{}' already installed", manifest.name));
+        }
+        let tool_dir = self.registry_dir.join(&manifest.name);
+        tokio::fs::create_dir_all(&tool_dir)
+            .await
+            .map_err(|e| e.to_string())?;
+        let json = serde_json::to_string_pretty(&manifest).map_err(|e| e.to_string())?;
+        tokio::fs::write(tool_dir.join("manifest.json"), json)
+            .await
+            .map_err(|e| e.to_string())?;
+        self.tools.push(manifest);
+        self.tools.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(())
+    }
+
+    async fn remove_tool(&mut self, name: &str) -> Result<(), String> {
+        let index = self
+            .tools
+            .iter()
+            .position(|tool| tool.name == name)
+            .ok_or_else(|| format!("Tool '{name}' not found"))?;
+        let tool_dir = self.registry_dir.join(name);
+        if tool_dir.exists() {
+            tokio::fs::remove_dir_all(tool_dir)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        self.tools.remove(index);
+        Ok(())
+    }
+
+    async fn reload(&mut self) -> Result<(), String> {
+        let reloaded = Self::load(self.registry_dir.clone()).await?;
+        self.tools = reloaded.tools;
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecutionEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+impl ExecutionEvent {
+    fn warning(message: impl Into<String>) -> Self {
+        Self {
+            event_type: "warning".into(),
+            content: None,
+            message: Some(message.into()),
+        }
+    }
+
+    fn error(message: impl Into<String>) -> Self {
+        Self {
+            event_type: "error".into(),
+            content: None,
+            message: Some(message.into()),
+        }
+    }
+
+    fn text(content: impl Into<String>) -> Self {
+        Self {
+            event_type: "text".into(),
+            content: Some(content.into()),
+            message: None,
+        }
+    }
+
+    fn complete() -> Self {
+        Self {
+            event_type: "complete".into(),
+            content: None,
+            message: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -171,9 +354,7 @@ pub struct RunTaskPreviewResult {
 
 pub struct ScriptronCore {
     registry: Arc<RwLock<CliRegistry>>,
-    auth: Arc<AuthManager>,
     workspace_dir: PathBuf,
-    config: Arc<RwLock<AppConfig>>,
     config_path: PathBuf,
     runner: ProcessRunner,
 }
@@ -186,7 +367,6 @@ impl ScriptronCore {
 
         let data_dir = home.join(".scriptron");
         let legacy_registry_dir = data_dir.join("registry");
-        let auth_dir = data_dir.join("credentials");
         let config_path = data_dir.join("config.json");
         let workspace_dir = home.join("ScripTron");
         let registry_dir = workspace_dir.join(".register");
@@ -196,13 +376,14 @@ impl ScriptronCore {
         migrate_legacy_registry(&legacy_registry_dir, &registry_dir).await?;
         let bootstrap_runner = ProcessRunner::new();
         let _ = sync_tronhub_cache(&workspace_dir, &bootstrap_runner).await;
-        tokio::fs::create_dir_all(&auth_dir).await?;
 
         Ok(Self {
-            registry: Arc::new(RwLock::new(CliRegistry::load(&registry_dir).await?)),
-            auth: Arc::new(AuthManager::new(auth_dir)),
+            registry: Arc::new(RwLock::new(
+                CliRegistry::load(&registry_dir)
+                    .await
+                    .map_err(anyhow::Error::msg)?,
+            )),
             workspace_dir,
-            config: Arc::new(RwLock::new(AppConfig::load(&config_path))),
             config_path,
             runner: ProcessRunner::new(),
         })
@@ -344,7 +525,14 @@ impl ScriptronCore {
     }
 
     pub async fn get_auth_status(&self) -> Vec<ProviderStatus> {
-        all_provider_statuses(&self.auth).await
+        vec![ProviderStatus {
+            provider: "hermes".into(),
+            display_name: "Hermes Agent".into(),
+            connected: false,
+            auth_method: "hermes_managed".into(),
+            available_models: vec!["Hermes managed".into()],
+            default_model: "Hermes managed".into(),
+        }]
     }
 
     /// Run a TronHub plugin's `install.sh` to install the underlying tool/CLI.
@@ -436,35 +624,28 @@ impl ScriptronCore {
         Ok(result.combined_output())
     }
 
-    pub async fn store_api_key(&self, provider: String, api_key: String) -> Result<(), String> {
-        let p = parse_provider(&provider)?;
-        self.auth
-            .store(&p, &Credentials::from_api_key(api_key))
-            .await
-            .map_err(|e| e.to_string())
+    pub async fn store_api_key(&self, _provider: String, _api_key: String) -> Result<(), String> {
+        Err("Provider authentication has moved to the official Hermes Agent flow.".into())
     }
 
-    pub async fn disconnect_provider(&self, provider: String) -> Result<(), String> {
-        let p = parse_provider(&provider)?;
-        self.auth.delete(&p).await.map_err(|e| e.to_string())
+    pub async fn disconnect_provider(&self, _provider: String) -> Result<(), String> {
+        Err("Provider authentication is now managed by Hermes Agent.".into())
     }
 
     pub async fn get_active_config(&self) -> ActiveConfig {
-        let cfg = self.config.read().await.clone();
-        ActiveConfig {
-            provider: cfg.active_provider.id().into(),
-            model: cfg.active_model,
-        }
+        std::fs::read_to_string(&self.config_path)
+            .ok()
+            .and_then(|raw| serde_json::from_str(&raw).ok())
+            .unwrap_or_else(default_active_config)
     }
 
     pub async fn set_active_config(&self, provider: String, model: String) -> Result<(), String> {
-        let active_provider = parse_provider(&provider)?;
-        let cfg = AppConfig {
-            active_provider,
-            active_model: model,
-        };
-        cfg.save(&self.config_path).map_err(|e| e.to_string())?;
-        *self.config.write().await = cfg;
+        let cfg = ActiveConfig { provider, model };
+        if let Some(parent) = self.config_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        let json = serde_json::to_string_pretty(&cfg).map_err(|e| e.to_string())?;
+        std::fs::write(&self.config_path, json).map_err(|e| e.to_string())?;
         Ok(())
     }
 
@@ -504,9 +685,10 @@ impl ScriptronCore {
     ) -> Result<RunTaskPreviewResult, String> {
         let mut blackboard = blackboard.unwrap_or_else(|| serde_json::json!({}));
         let log_path = run_log_path(tron_path.as_deref(), &project_path);
-        let mut events = vec![ExecutionEvent::Warning {
-            message: format!("Run started. Log file: {}", log_path.display()),
-        }];
+        let mut events = vec![ExecutionEvent::warning(format!(
+            "Run started. Log file: {}",
+            log_path.display()
+        ))];
         events.extend(
             self.run_orchestrated_tron_task(
                 cells.clone(),
@@ -518,7 +700,11 @@ impl ScriptronCore {
         let response = events
             .iter()
             .filter_map(|event| match event {
-                ExecutionEvent::Text { content } => Some(content.as_str()),
+                ExecutionEvent {
+                    event_type,
+                    content: Some(content),
+                    ..
+                } if event_type == "text" => Some(content.as_str()),
                 _ => None,
             })
             .collect::<Vec<_>>()
@@ -544,24 +730,20 @@ impl ScriptronCore {
         &self,
         cells: Vec<TronCell>,
         project_path: PathBuf,
-        blackboard: serde_json::Value,
+        _blackboard: serde_json::Value,
     ) -> Result<Vec<ExecutionEvent>, String> {
         let graph = build_function_graph(&cells, &project_path)?;
         if graph.roots.is_empty() {
             return Ok(vec![
-                ExecutionEvent::Error {
-                    message: "No run cells to execute.".into(),
-                },
-                ExecutionEvent::Complete,
+                ExecutionEvent::error("No run cells to execute."),
+                ExecutionEvent::complete(),
             ]);
         }
 
         let plan = build_execution_plan(&graph)?;
-        let provider = self.agent_provider(&project_path).await?;
         let mut outputs: HashMap<String, String> = HashMap::new();
 
         for level in plan {
-            let mut handles = Vec::new();
             for name in level {
                 let function = graph
                     .functions
@@ -577,35 +759,22 @@ impl ScriptronCore {
                     .filter_map(|dep| outputs.get(&dep).map(|out| (dep, out.clone())))
                     .map(|(dep, out)| format!("### Referenced function: {dep}\n\n{out}"))
                     .collect::<Vec<_>>();
-                let task = TronTask {
-                    instructions: vec![function.body.clone()],
-                    context: graph
-                        .context
-                        .iter()
-                        .cloned()
-                        .chain(function.context.iter().cloned())
-                        .chain(dependency_context)
-                        .collect(),
-                    blackboard: blackboard.clone(),
-                    project_path: project_path.clone(),
-                };
-                let agent = AgentLoop::new(provider.clone(), self.registry.clone());
-                handles.push(tokio::spawn(async move {
-                    let (output, events) = run_agent_to_events(agent, task).await?;
-                    Ok::<(String, String, Vec<ExecutionEvent>), String>((name, output, events))
-                }));
-            }
-
-            let mut level_events = Vec::new();
-            for handle in handles {
-                let (name, output, events) = handle.await.map_err(|e| e.to_string())??;
+                let context = graph
+                    .context
+                    .iter()
+                    .cloned()
+                    .chain(function.context.iter().cloned())
+                    .chain(dependency_context)
+                    .collect::<Vec<_>>()
+                    .join("\n\n");
+                let output = format!(
+                    "Hermes migration placeholder for `{name}`.\n\nProject: {}\n\nContext:\n{}\n\nPrompt:\n{}",
+                    project_path.display(),
+                    context,
+                    function.body
+                );
                 outputs.insert(name, output);
-                level_events.extend(events);
             }
-            outputs.insert(
-                format!("__events_{}", outputs.len()),
-                serde_json::to_string(&level_events).unwrap_or_default(),
-            );
         }
 
         let mut response = String::new();
@@ -619,24 +788,13 @@ impl ScriptronCore {
             }
         }
 
-        let mut events = Vec::new();
-        let mut internal_event_keys = outputs
-            .keys()
-            .filter(|key| key.starts_with("__events_"))
-            .cloned()
-            .collect::<Vec<_>>();
-        internal_event_keys.sort();
-        for key in internal_event_keys {
-            if let Some(raw) = outputs.get(&key) {
-                if let Ok(mut parsed) = serde_json::from_str::<Vec<ExecutionEvent>>(raw) {
-                    events.append(&mut parsed);
-                }
-            }
-        }
-        events.push(ExecutionEvent::Text {
-            content: response.trim().to_string(),
-        });
-        events.push(ExecutionEvent::Complete);
+        let events = vec![
+            ExecutionEvent::warning(
+                "Custom agent runtime was removed. Hermes Gateway integration is pending.",
+            ),
+            ExecutionEvent::text(response.trim().to_string()),
+            ExecutionEvent::complete(),
+        ];
         Ok(events)
     }
 
@@ -689,11 +847,12 @@ impl ScriptronCore {
                 .map_err(|e| e.to_string())?;
         }
 
-        let default_config = AppConfig::default();
-        default_config
-            .save(&self.config_path)
-            .map_err(|e| e.to_string())?;
-        *self.config.write().await = default_config;
+        let default_config = default_active_config();
+        let json = serde_json::to_string_pretty(&default_config).map_err(|e| e.to_string())?;
+        if let Some(parent) = self.config_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        std::fs::write(&self.config_path, json).map_err(|e| e.to_string())?;
 
         ensure_workspace_layout(&self.workspace_dir)
             .await
@@ -865,90 +1024,19 @@ impl ScriptronCore {
             "Memory context:\n{}\n\nUser request:\n{}",
             memory.effective_prompt, message
         );
-        let provider = self.agent_provider(&cwd).await?;
-        let agent = AgentLoop::new(provider, self.registry.clone());
-        let task = TronTask {
-            instructions: vec![prompt],
-            context: Vec::new(),
-            blackboard: serde_json::json!({}),
-            project_path: cwd,
-        };
-        let (tx, mut rx) = mpsc::channel(128);
-        let handle = tokio::spawn(async move { agent.run(task, tx).await });
-        let mut transcript = Vec::new();
-
-        while let Some(event) = rx.recv().await {
-            if let Some(line) = format_agent_event(&event) {
-                transcript.push(line);
-            }
-            if matches!(event, ExecutionEvent::Complete) {
-                break;
-            }
-        }
-
-        let result = handle.await.map_err(|e| e.to_string())?;
-        if let Err(error) = result {
-            transcript.push(format!("Error: {error}"));
-        }
-        let output = transcript.join("\n\n");
         let mut troner = self.load_troner_memory().await?;
         troner.audit_log.push(audit_event(
-            "agent.embedded",
+            "agent.hermes.pending",
             serde_json::json!({
                 "message": message,
-                "events": transcript.len(),
+                "project_path": cwd,
             }),
         ));
         self.save_troner_memory(&troner).await?;
-        if output.trim().is_empty() {
-            Ok("(Troner Agent completed without output.)".into())
-        } else {
-            Ok(output)
-        }
-    }
-
-    async fn agent_provider(
-        &self,
-        project_path: &Path,
-    ) -> Result<Arc<dyn LlmProvider + Send + Sync>, String> {
-        let cfg = self.config.read().await.clone();
-        // If the active model matches an installed CLI model plugin, use it.
-        let model_cli = {
-            let registry = self.registry.read().await;
-            registry
-                .get_tool(&cfg.active_model)
-                .filter(|tool| tool.kind == CliKind::Model)
-                .cloned()
-        };
-        if let Some(model_cli) = model_cli {
-            return Ok(Arc::new(CliModelProvider::new(
-                model_cli,
-                project_path.to_path_buf(),
-            )));
-        }
-        // Otherwise, use the active provider's API key.
-        let token = self.auth.access_token(&cfg.active_provider).await.map_err(|e| {
-            format!(
-                "No credentials for {}. Connect this provider in Model Management before running the embedded agent. ({})",
-                cfg.active_provider.id(),
-                e
-            )
-        })?;
-        let provider: Arc<dyn LlmProvider + Send + Sync> = match cfg.active_provider {
-            Provider::Anthropic => {
-                Arc::new(AnthropicProvider::new(token).with_model(cfg.active_model))
-            }
-            Provider::Gemini => Arc::new(GeminiProvider::new(token).with_model(cfg.active_model)),
-            Provider::OpenAi => Arc::new(OpenAiCompatProvider::new_openai(token, cfg.active_model)),
-            Provider::DeepSeek => {
-                Arc::new(OpenAiCompatProvider::new_deepseek(token, cfg.active_model))
-            }
-            Provider::OpenRouter => Arc::new(OpenAiCompatProvider::new_openrouter(
-                token,
-                cfg.active_model,
-            )),
-        };
-        Ok(provider)
+        Ok(format!(
+            "Hermes Agent integration is pending. The prompt has been prepared for the upcoming gateway layer:\n\n{}",
+            prompt
+        ))
     }
 
     async fn load_troner_memory(&self) -> Result<TronerMemory, String> {
@@ -984,40 +1072,6 @@ struct FunctionGraph {
 
 const RUN_NAME_PREFIX: &str = "[[scriptron:run-name]]";
 const GEN_CELL_PREFIX: &str = "[[scriptron:gen-markdown]]";
-
-async fn run_agent_to_events(
-    agent: AgentLoop,
-    task: TronTask,
-) -> Result<(String, Vec<ExecutionEvent>), String> {
-    let (tx, mut rx) = mpsc::channel(128);
-    let handle = tokio::spawn(async move { agent.run(task, tx).await });
-    let mut text = Vec::new();
-    let mut events = Vec::new();
-    while let Some(event) = rx.recv().await {
-        match event {
-            ExecutionEvent::Text { content } => {
-                text.push(content.clone());
-                events.push(ExecutionEvent::Text { content });
-            }
-            ExecutionEvent::Error { message } => {
-                events.push(ExecutionEvent::Error {
-                    message: message.clone(),
-                });
-                return Err(message);
-            }
-            ExecutionEvent::Complete => {
-                events.push(ExecutionEvent::Complete);
-                break;
-            }
-            other => events.push(other),
-        }
-    }
-    handle
-        .await
-        .map_err(|e| e.to_string())?
-        .map_err(|e| e.to_string())?;
-    Ok((text.join("\n\n").trim().to_string(), events))
-}
 
 fn build_function_graph(cells: &[TronCell], project_path: &Path) -> Result<FunctionGraph, String> {
     let current_context = cells
@@ -2017,99 +2071,6 @@ fn marketplace_suggestions(query: &str) -> Vec<MentionItem> {
         .collect()
 }
 
-fn format_agent_event(event: &ExecutionEvent) -> Option<String> {
-    match event {
-        ExecutionEvent::Thinking { content } => {
-            if content.trim().is_empty() {
-                None
-            } else {
-                Some(content.trim().to_string())
-            }
-        }
-        ExecutionEvent::Text { content } => {
-            if content.trim().is_empty() {
-                None
-            } else {
-                Some(content.trim().to_string())
-            }
-        }
-        ExecutionEvent::Plan { content } => {
-            if content.trim().is_empty() {
-                None
-            } else {
-                Some(format!("Plan:\n{}", content.trim()))
-            }
-        }
-        ExecutionEvent::StepStarted {
-            step_id,
-            tool,
-            args,
-        } => Some(format!(
-            "Step `{}` started: `{}` with `{}`",
-            step_id,
-            tool,
-            compact_json(args)
-        )),
-        ExecutionEvent::StepRetried {
-            step_id,
-            tool,
-            attempt,
-            decision,
-            reason,
-        } => Some(format!(
-            "Step `{}` retry {} for `{}`: {} ({})",
-            step_id, attempt, tool, decision, reason
-        )),
-        ExecutionEvent::StepCompleted {
-            step_id,
-            tool,
-            output,
-        } => Some(format!(
-            "Step `{}` completed: `{}`\n{}",
-            step_id,
-            tool,
-            output.trim()
-        )),
-        ExecutionEvent::StepFailed {
-            step_id,
-            tool,
-            error,
-        } => Some(format!(
-            "Step `{}` failed: `{}`\n{}",
-            step_id,
-            tool,
-            error.trim()
-        )),
-        ExecutionEvent::SkillSelected { skills } => {
-            if skills.is_empty() {
-                None
-            } else {
-                Some(format!("Selected skills: {}", skills.join(", ")))
-            }
-        }
-        ExecutionEvent::ToolCall { tool, args } => {
-            Some(format!("Running `{}` with `{}`", tool, compact_json(args)))
-        }
-        ExecutionEvent::ToolResult {
-            tool,
-            output,
-            success,
-        } => Some(format!(
-            "{} `{}`:\n{}",
-            if *success { "Result from" } else { "Failed" },
-            tool,
-            output.trim()
-        )),
-        ExecutionEvent::Warning { message } => Some(format!("Warning: {message}")),
-        ExecutionEvent::Error { message } => Some(format!("Error: {message}")),
-        ExecutionEvent::Complete => None,
-    }
-}
-
-fn compact_json(value: &serde_json::Value) -> String {
-    serde_json::to_string(value).unwrap_or_else(|_| "{}".into())
-}
-
 async fn list_dir(dir: PathBuf) -> Result<Vec<FileEntry>, String> {
     let mut rd = tokio::fs::read_dir(dir).await.map_err(|e| e.to_string())?;
     let mut entries = Vec::new();
@@ -2132,6 +2093,9 @@ async fn list_dir(dir: PathBuf) -> Result<Vec<FileEntry>, String> {
     Ok(entries)
 }
 
-fn parse_provider(s: &str) -> Result<Provider, String> {
-    Provider::from_id(s).ok_or_else(|| format!("Unknown provider: {}", s))
+fn default_active_config() -> ActiveConfig {
+    ActiveConfig {
+        provider: "hermes".into(),
+        model: "Hermes managed".into(),
+    }
 }

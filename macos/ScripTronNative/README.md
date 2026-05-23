@@ -15,11 +15,12 @@ scriptron-ffi
 scriptron-core
   |
   +-- tron-parser
-  +-- cli-registry
-  +-- auth
-  +-- agent-loop
   +-- process-runner
 ```
+
+`scriptron-core` is now a host layer, not an agent runtime. The custom Rust
+agent/provider crates were removed; the next runtime path is the official Hermes
+Agent TUI Gateway over JSON-RPC.
 
 Swift calls three exported Rust functions:
 
@@ -64,19 +65,15 @@ The current FFI bridge exposes:
 - `open_tron_file`
 - `save_tron_file`
 - `create_tron_file`
-- `list_tools`
-- `install_tool_from_json`
-- `remove_tool`
-- `get_auth_status`
-- `store_api_key`
-- `disconnect_provider`
 - `get_active_config`
 - `set_active_config`
 - `build_task`
 - `run_task_preview`
 - `poll_events`
 
-`run_task_preview` and `poll_events` are the first polling queue version. Real agent execution should reuse the same event shape and replace preview events with live `agent-loop` output.
+`run_task_preview` and `poll_events` currently return migration placeholder
+events. Real agent execution should be wired through the Hermes Gateway methods
+listed in `TODO_HERMES_MIGRATION.md`.
 
 ## Workspace Metadata
 

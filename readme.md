@@ -128,20 +128,18 @@ macos/ScripTronNative              SwiftUI app (front-end)
 crates/
 ├── scriptron-ffi                  C-ABI dynamic library (libscriptron_ffi.dylib)
 │                                  JSON-RPC dispatcher over C strings
-├── scriptron-core                 Business logic (workspace, projects, agent runs,
-│                                  memory, TronHub install)
-├── agent-loop                     Multi-turn LLM tool-use loop. Provider impls:
-│                                  Anthropic, Gemini, OpenAiCompat, CliModel
+├── scriptron-core                 Host logic (workspace, projects, .tron files,
+│                                  blackboard, Hermes migration placeholders)
 ├── tron-parser                    .tron file format
 ├── cli-registry                   .register/<name>/manifest.json registry
 ├── process-runner                 Async subprocess with timeout
-├── auth                           Multi-provider OAuth + API-key + keychain
 └── scriptron-cli                  CLI binary (`scriptron project create`, etc.)
 ```
 
 The Swift app talks to Rust **only** through `RustBridge.swift`, which calls
 `scriptron_call(json_string)` and parses the JSON response. All business logic
-lives in Rust.
+lives in Rust. Agent runtime, models, OAuth, tools, skills, approvals, clarify,
+and multi-agent behavior are moving to the official Hermes Agent TUI Gateway.
 
 ### Workspace layout (on disk)
 

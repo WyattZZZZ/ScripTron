@@ -4,9 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-agent-loop = { path = "../agent-loop" }
-auth = { path = "../auth" }
-cli-registry = { path = "../cli-registry" }
 process-runner = { path = "../process-runner" }
 tron-parser = { path = "../tron-parser" }
 serde = { workspace = true }

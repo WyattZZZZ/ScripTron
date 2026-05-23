@@ -52,13 +52,14 @@ The Rust layer remains, but only as a local host/compatibility layer between Swi
 
 Goal: remove ScripTron's custom runtime and reshape SwiftUI around Hermes TUI Gateway semantics.
 
-Delete or replace:
+Deleted or replaced:
 
-- `crates/agent-loop/`
-- `crates/hermes/`
-- Custom Anthropic, Gemini, OpenAI-compatible, DeepSeek, OpenRouter provider code.
-- Custom CLI model provider code.
-- Custom tool-use loop, planner, retry, and final-response synthesis code.
+- [x] `crates/agent-loop/`
+- [x] local Rust `crates/hermes/`
+- [x] `crates/auth/`
+- [x] Custom Anthropic, Gemini, OpenAI-compatible, DeepSeek, OpenRouter provider code.
+- [x] Custom CLI model provider code.
+- [x] Custom tool-use loop, planner, retry, and final-response synthesis code.
 - Custom skill retry/runtime logic.
 - Custom TronHub/CLI/Skill runtime management surfaces that duplicate official Hermes behavior.
 
@@ -174,4 +175,4 @@ Suggested Rust modules:
 3. Implement `hermes_session_create`, `hermes_prompt_submit`, and `hermes_poll_events`.
 4. Wire one Swift run cell to streaming `message.delta`.
 5. Add approval and clarify modal prototypes.
-6. Once the spike works, remove `crates/agent-loop`, local `crates/hermes`, and custom provider/auth paths.
+6. Remove remaining custom skill retry and TronHub/CLI/Skill runtime surfaces after Hermes official library integration is wired.
