@@ -134,17 +134,6 @@ async fn dispatch(request: RpcRequest) -> Result<Value, String> {
         "get_auth_status" => {
             serde_json::to_value(core.get_auth_status().await).map_err(|e| e.to_string())
         }
-        "store_api_key" => {
-            let provider = required_string(&request.params, "provider")?;
-            let api_key = required_string(&request.params, "api_key")?;
-            core.store_api_key(provider, api_key).await?;
-            Ok(json!(null))
-        }
-        "disconnect_provider" => {
-            let provider = required_string(&request.params, "provider")?;
-            core.disconnect_provider(provider).await?;
-            Ok(json!(null))
-        }
         "get_active_config" => {
             serde_json::to_value(core.get_active_config().await).map_err(|e| e.to_string())
         }
@@ -180,29 +169,6 @@ async fn dispatch(request: RpcRequest) -> Result<Value, String> {
         "factory_reset_app_state" => {
             core.factory_reset_app_state().await?;
             Ok(json!(null))
-        }
-        "run_adaptive_skill" => {
-            let skill = required_string(&request.params, "skill")?;
-            let input = request
-                .params
-                .get("input")
-                .cloned()
-                .unwrap_or_else(|| json!({}));
-            let max_retries = request
-                .params
-                .get("max_retries")
-                .and_then(Value::as_u64)
-                .unwrap_or(3) as u32;
-            let dry_run = request
-                .params
-                .get("dry_run")
-                .and_then(Value::as_bool)
-                .unwrap_or(true);
-            serde_json::to_value(
-                core.run_adaptive_skill(skill, input, max_retries, dry_run)
-                    .await?,
-            )
-            .map_err(|e| e.to_string())
         }
         "search_mentions" => {
             let query = request
@@ -246,7 +212,7 @@ async fn dispatch(request: RpcRequest) -> Result<Value, String> {
             let blackboard = request.params.get("blackboard").cloned();
             Ok(core.build_task(cells, project_path, blackboard).await)
         }
-        "run_task_preview" => {
+        "hermes_prompt_submit" => {
             let cells: Vec<TronCell> =
                 serde_json::from_value(required_value(&request.params, "cells")?)
                     .map_err(|e| e.to_string())?;
@@ -258,7 +224,7 @@ async fn dispatch(request: RpcRequest) -> Result<Value, String> {
                 .and_then(Value::as_str)
                 .map(str::to_string);
             let result = core
-                .run_tron_task_preview(cells, project_path, blackboard, tron_path)
+                .hermes_prompt_submit(cells, project_path, blackboard, tron_path)
                 .await?;
             let queued = result.events.len();
             for event in result.events {
@@ -266,7 +232,7 @@ async fn dispatch(request: RpcRequest) -> Result<Value, String> {
             }
             Ok(json!({ "queued": queued, "blackboard": result.blackboard }))
         }
-        "poll_events" => {
+        "hermes_poll_events" => {
             let mut queue = event_queue().lock();
             let events: Vec<Value> = queue.drain(..).collect();
             Ok(json!(events))

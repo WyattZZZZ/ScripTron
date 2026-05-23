@@ -208,30 +208,10 @@ struct ProjectMemory: Codable {
     var long_context: [MemoryNote]
 }
 
-struct SkillRetryAttempt: Codable, Identifiable {
-    var id: String { "\(attempt)-\(created_at)" }
-    let attempt: Int
-    let status: String
-    let reason: String
-    let correction: String
-    let input: AnyCodable
-    let output: String
-    let created_at: String
-}
-
-struct SkillRetryTrace: Codable, Identifiable {
-    let id: String
-    let skill: String
-    let status: String
-    let attempts: [SkillRetryAttempt]
-    let created_at: String
-}
-
 struct MemorySnapshot: Decodable {
     let global_memory: GlobalMemory
     let project_memory: ProjectMemory
     let effective_prompt: String
-    let skill_retry_traces: [SkillRetryTrace]
 }
 
 struct MentionModule: Codable, Identifiable {

@@ -488,368 +488,69 @@ private struct SkillManagementView: View {
 private struct ModelManagementView: View {
     @EnvironmentObject private var model: AppModel
 
-    private var connectedCount: Int {
-        model.providerStatuses.filter(\.connected).count
-    }
-
-    private var installedCliModels: [CLIManifest] {
-        model.cliRegistry.filter { $0.kind == "model" }
+    private var gatewayStatus: ProviderStatus? {
+        model.providerStatuses.first
     }
 
     var body: some View {
-        ManagementPage(title: model.tr("Model Management", "模型管理"), subtitle: model.tr("Connect API providers or install CLI model packages from TronHub.", "连接 API Provider 或从 TronHub 安装 CLI 模型插件。")) {
+        ManagementPage(title: model.tr("Model Management", "模型管理"), subtitle: model.tr("Hermes Agent manages model login, selection, tools, and skills for ScripTron.", "Hermes Agent 统一管理模型登录、选择、工具和 skill。")) {
             HStack {
-                ManagementPill(model.tr("Provider", "Provider"), value: model.activeConfig?.provider ?? model.tr("Not loaded", "未加载"))
-                ManagementPill(model.tr("Active Model", "当前模型"), value: model.activeConfig?.model ?? model.tr("Not selected", "未选择"))
-                ManagementPill(model.tr("Connected", "已连接"), value: "\(connectedCount)/\(model.providerStatuses.count)")
+                ManagementPill(model.tr("Gateway", "网关"), value: gatewayStatus?.display_name ?? "Hermes")
+                ManagementPill(model.tr("Auth", "认证"), value: gatewayStatus?.auth_method ?? model.tr("Hermes managed", "Hermes 管理"))
+                ManagementPill(model.tr("Active Model", "当前模型"), value: model.activeConfig?.model ?? model.tr("Hermes default", "Hermes 默认"))
                 Spacer()
-                Button { model.syncTronhub() } label: { Label(model.tr("Sync TronHub", "同步 TronHub"), systemImage: "arrow.triangle.2.circlepath") }
-                    .buttonStyle(ManagementButtonStyle(primary: true))
                 Button { model.loadWorkspaceManagementData() } label: { Label(model.tr("Refresh", "刷新"), systemImage: "arrow.clockwise") }
                     .buttonStyle(ManagementButtonStyle())
             }
 
-            // ── API Providers ─────────────────────────────────────────────────
-            Text(model.tr("API Providers", "API Provider"))
-                .font(.system(size: 14, weight: .bold))
-                .foregroundStyle(Color.appSecondaryText)
-
-            if model.providerStatuses.isEmpty {
-                ProgressView().frame(maxWidth: .infinity, minHeight: 120)
-            } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 300), spacing: 16)], spacing: 16) {
-                    ForEach(model.providerStatuses) { status in
-                        ProviderCard(status: status)
+            VStack(alignment: .leading, spacing: 16) {
+                HStack(spacing: 12) {
+                    Image(systemName: gatewayStatus?.connected == true ? "checkmark.seal.fill" : "seal")
+                        .font(.system(size: 26, weight: .semibold))
+                        .foregroundStyle(gatewayStatus?.connected == true ? Color.primaryGreen : Color.appSecondaryText)
+                        .frame(width: 48, height: 48)
+                        .background(Color.primaryGreen.opacity(0.1), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(model.tr("Hermes Gateway", "Hermes 网关"))
+                            .font(.system(size: 18, weight: .bold))
+                            .foregroundStyle(Color.appText)
+                        Text(model.tr("Use Hermes to check installation, sign in, pick models, and inspect doctor output.", "通过 Hermes 检查安装、登录、选择模型并查看 doctor 输出。"))
+                            .font(.system(size: 13))
+                            .foregroundStyle(Color.appSecondaryText)
                     }
+                    Spacer()
+                    Text(gatewayStatus?.connected == true ? model.tr("Ready", "就绪") : model.tr("Pending", "待检查"))
+                        .font(.system(size: 11, weight: .bold))
+                        .foregroundStyle(gatewayStatus?.connected == true ? .white : Color.appSecondaryText)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(gatewayStatus?.connected == true ? Color.primaryGreen : Color.surfaceSoft, in: Capsule())
                 }
-            }
 
-            // ── Installed CLI Models ──────────────────────────────────────────
-            if !installedCliModels.isEmpty {
-                Text(model.tr("Installed CLI Models", "已安装的 CLI 模型"))
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(Color.appSecondaryText)
-                VStack(spacing: 10) {
-                    ForEach(installedCliModels) { manifest in
-                        InstalledCliModelRow(manifest: manifest)
+                HStack(spacing: 10) {
+                    Button { model.status = model.tr("Hermes install check will run through the gateway.", "Hermes 安装检查将通过网关执行。") } label: {
+                        Label(model.tr("Check Install", "检查安装"), systemImage: "stethoscope")
                     }
-                }
-            }
-
-            // ── TronHub CLI Models Market ─────────────────────────────────────
-            if !model.tronhubModels.isEmpty {
-                Text(model.tr("CLI Model Plugins", "CLI 模型插件市场"))
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(Color.appSecondaryText)
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 16)], spacing: 16) {
-                    ForEach(model.tronhubModels) { item in
-                        TronhubCard(entry: item) { model.installTronhub(item) }
-                    }
-                }
-            }
-        }
-        .onAppear { model.loadWorkspaceManagementData() }
-        .sheet(isPresented: Binding(
-            get: { model.pluginLoginOutput != nil },
-            set: { if !$0 { model.pluginLoginOutput = nil } }
-        )) {
-            PluginLoginOutputSheet()
-        }
-    }
-}
-
-private struct InstalledCliModelRow: View {
-    @EnvironmentObject private var model: AppModel
-    let manifest: CLIManifest
-    @State private var hovering = false
-
-    private var isActive: Bool {
-        model.activeConfig?.model == manifest.name
-    }
-
-    private var supportsLogin: Bool {
-        manifest.args_schema.contains { $0.name == "action" }
-    }
-
-    private var isLoggingIn: Bool {
-        model.pluginLoginRunning == manifest.name
-    }
-
-    var body: some View {
-        HStack(spacing: 14) {
-            Image(systemName: "cpu")
-                .font(.system(size: 18, weight: .semibold))
-                .foregroundStyle(Color.primaryGreen)
-                .frame(width: 42, height: 42)
-                .background(Color.primaryGreen.opacity(0.12), in: RoundedRectangle(cornerRadius: 13, style: .continuous))
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 8) {
-                    Text(manifest.name).font(.system(size: 17, weight: .bold)).foregroundStyle(Color.appText)
-                    if isActive {
-                        Text(model.tr("Active", "当前"))
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 3)
-                            .background(Color.primaryGreen, in: Capsule())
-                    }
-                }
-                Text(manifest.description).font(.system(size: 13)).foregroundStyle(Color.appSecondaryText).lineLimit(2)
-                Text(manifest.command).font(.system(size: 11, design: .monospaced)).foregroundStyle(Color.appSecondaryText.opacity(0.75)).lineLimit(1)
-            }
-            Spacer()
-            HStack(spacing: 8) {
-                Button {
-                    model.runPluginInstallScript(kind: "model", name: manifest.name)
-                } label: {
-                    if isLoggingIn {
-                        HStack(spacing: 6) {
-                            ProgressView().controlSize(.small)
-                            Text(model.tr("Working…", "执行中…"))
-                        }
-                    } else {
-                        Label(model.tr("Install Deps", "安装依赖"), systemImage: "arrow.down.circle")
-                    }
-                }
-                .buttonStyle(ManagementButtonStyle())
-                .disabled(isLoggingIn)
-                if supportsLogin {
-                    Button {
-                        model.runPluginLogin(manifest.name)
-                    } label: {
+                    .buttonStyle(ManagementButtonStyle(primary: true))
+                    Button { model.status = model.tr("Hermes login opens through the gateway.", "Hermes 登录将通过网关打开。") } label: {
                         Label(model.tr("Login", "登录"), systemImage: "person.crop.circle.badge.checkmark")
                     }
                     .buttonStyle(ManagementButtonStyle())
-                    .disabled(isLoggingIn)
-                }
-                Button(model.tr("Set Active", "设为当前")) {
-                    model.activateModelCLI(manifest)
-                }
-                .buttonStyle(ManagementButtonStyle(primary: !isActive))
-                .disabled(isActive)
-                Button {
-                    model.removeCLI(manifest)
-                } label: {
-                    Image(systemName: "trash")
-                }
-                .buttonStyle(ManagementButtonStyle(role: .destructive))
-            }
-        }
-        .padding(16)
-        .background(hovering ? Color.primaryGreen.opacity(0.07) : .white.opacity(0.82), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(isActive ? Color.primaryGreen.opacity(0.5) : Color.hairline.opacity(0.7), lineWidth: isActive ? 1.5 : 1)
-        )
-        .onHover { hovering = $0 }
-        .animation(.easeOut(duration: 0.12), value: hovering)
-    }
-}
-
-private struct PluginLoginOutputSheet: View {
-    @EnvironmentObject private var model: AppModel
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack {
-                Image(systemName: "person.crop.circle.badge.checkmark")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(Color.primaryGreen)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(model.tr("Login Output", "登录结果"))
-                        .font(.system(size: 16, weight: .bold))
-                    if let pair = model.pluginLoginOutput {
-                        Text(pair.name)
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundStyle(Color.appSecondaryText)
+                    Button { model.status = model.tr("Model selection is delegated to Hermes.", "模型选择已委托给 Hermes。") } label: {
+                        Label(model.tr("Select Model", "选择模型"), systemImage: "slider.horizontal.3")
                     }
-                }
-                Spacer()
-                Button { dismiss() } label: { Image(systemName: "xmark.circle.fill") }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Color.appSecondaryText)
-            }
-            ScrollView {
-                Text(model.pluginLoginOutput?.output ?? "")
-                    .font(.system(size: 12, design: .monospaced))
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
-                    .padding(12)
-            }
-            .frame(minHeight: 200, maxHeight: 400)
-            .background(Color.surfaceSoft.opacity(0.6), in: RoundedRectangle(cornerRadius: 12))
-            HStack {
-                Spacer()
-                Button(model.tr("Close", "关闭")) { dismiss() }
-                    .buttonStyle(ManagementButtonStyle(primary: true))
-            }
-        }
-        .padding(20)
-        .frame(minWidth: 520, minHeight: 320)
-    }
-}
-
-private struct ProviderCard: View {
-    @EnvironmentObject private var model: AppModel
-    let status: ProviderStatus
-
-    @State private var selectedModel: String = ""
-    @State private var showingApiKeyInput = false
-    @State private var apiKeyDraft = ""
-
-    private var isActive: Bool {
-        model.activeConfig?.provider == status.provider
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            // Header row
-            HStack(spacing: 10) {
-                Image(systemName: providerIcon)
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(providerColor)
-                    .frame(width: 44, height: 44)
-                    .background(providerColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(status.display_name)
-                        .font(.system(size: 17, weight: .bold))
-                        .foregroundStyle(Color.appText)
-                    Text(status.provider)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(Color.appSecondaryText.opacity(0.7))
-                }
-                Spacer()
-                // Active badge
-                if isActive {
-                    Text(model.tr("Active", "当前"))
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 9)
-                        .padding(.vertical, 4)
-                        .background(Color.primaryGreen, in: Capsule())
-                }
-                // Connection badge
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(status.connected ? Color.primaryGreen : Color.appSecondaryText.opacity(0.4))
-                        .frame(width: 7, height: 7)
-                    Text(status.connected ? model.tr("Connected", "已连接") : model.tr("Not connected", "未连接"))
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(status.connected ? Color.primaryGreen : Color.appSecondaryText)
-                }
-                .padding(.horizontal, 10)
-                .padding(.vertical, 5)
-                .background(
-                    (status.connected ? Color.primaryGreen : Color.appSecondaryText).opacity(0.09),
-                    in: Capsule()
-                )
-            }
-
-            // Model picker
-            if status.connected || isActive {
-                HStack(spacing: 8) {
-                    Text(model.tr("Model", "模型"))
-                        .font(.system(size: 12, weight: .medium))
-                        .foregroundStyle(Color.appSecondaryText)
-                    Picker("", selection: $selectedModel) {
-                        ForEach(status.available_models, id: \.self) { m in
-                            Text(m).tag(m)
-                        }
+                    .buttonStyle(ManagementButtonStyle())
+                    Button { model.status = model.tr("Hermes doctor/log output is not connected yet.", "Hermes doctor/log 输出尚未接入。") } label: {
+                        Label(model.tr("Doctor", "诊断"), systemImage: "waveform.path.ecg")
                     }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .buttonStyle(ManagementButtonStyle())
                 }
             }
-
-            // API key input (inline)
-            if showingApiKeyInput {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text(model.tr("API Key", "API Key"))
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Color.appSecondaryText)
-                    SecureField("sk-...", text: $apiKeyDraft)
-                        .textFieldStyle(.plain)
-                        .font(.system(size: 13, design: .monospaced))
-                        .padding(10)
-                        .background(.white.opacity(0.9), in: RoundedRectangle(cornerRadius: 10))
-                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.hairline, lineWidth: 1))
-                    HStack {
-                        Button(model.tr("Cancel", "取消")) {
-                            showingApiKeyInput = false
-                            apiKeyDraft = ""
-                        }
-                        .buttonStyle(ManagementButtonStyle())
-                        Button(model.tr("Save", "保存")) {
-                            model.storeApiKey(apiKeyDraft, for: status.provider)
-                            showingApiKeyInput = false
-                            apiKeyDraft = ""
-                        }
-                        .buttonStyle(ManagementButtonStyle(primary: true))
-                        .disabled(apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                }
-            }
-
-            Spacer(minLength: 0)
-
-            // Action buttons
-            HStack(spacing: 8) {
-                if status.connected {
-                    Button(model.tr("Set Active", "设为当前")) {
-                        model.setActiveConfig(provider: status.provider, model: selectedModel)
-                    }
-                    .buttonStyle(ManagementButtonStyle(primary: !isActive))
-                    .disabled(isActive && model.activeConfig?.model == selectedModel)
-
-                    Button(model.tr("Disconnect", "断开")) {
-                        model.disconnectProvider(status.provider)
-                    }
-                    .buttonStyle(ManagementButtonStyle(role: .destructive))
-                } else {
-                    Button(model.tr("Connect", "连接")) {
-                        showingApiKeyInput.toggle()
-                    }
-                    .buttonStyle(ManagementButtonStyle(primary: true))
-                }
-            }
+            .padding(18)
+            .background(.white.opacity(0.82), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.hairline.opacity(0.7), lineWidth: 1))
         }
-        .padding(18)
-        .frame(minHeight: 180, alignment: .topLeading)
-        .background(.white.opacity(0.82), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: 18)
-                .stroke(isActive ? Color.primaryGreen.opacity(0.5) : Color.hairline.opacity(0.7), lineWidth: isActive ? 1.5 : 1)
-        )
-        .onAppear {
-            selectedModel = (isActive ? model.activeConfig?.model : nil) ?? status.default_model
-        }
-        .onChange(of: model.activeConfig?.model) { newModel in
-            if isActive, let m = newModel { selectedModel = m }
-        }
-    }
-
-    private var providerIcon: String {
-        switch status.provider {
-        case "anthropic": return "brain"
-        case "gemini": return "sparkles"
-        case "openai": return "circle.hexagongrid"
-        case "deepseek": return "waveform"
-        case "openrouter": return "arrow.triangle.branch"
-        default: return "cpu"
-        }
-    }
-
-    private var providerColor: Color {
-        switch status.provider {
-        case "anthropic": return Color(red: 0.8, green: 0.5, blue: 0.2)
-        case "gemini": return Color(red: 0.26, green: 0.52, blue: 0.96)
-        case "openai": return Color(red: 0.07, green: 0.73, blue: 0.50)
-        case "deepseek": return Color(red: 0.45, green: 0.3, blue: 0.95)
-        case "openrouter": return Color(red: 0.55, green: 0.35, blue: 0.75)
-        default: return Color.primaryGreen
-        }
+        .onAppear { model.loadWorkspaceManagementData() }
     }
 }
 

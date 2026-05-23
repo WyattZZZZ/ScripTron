@@ -164,7 +164,7 @@ struct ProjectStudioView: View {
                 }
             }
             Spacer()
-            Button(model.isRunningTask ? model.tr("Running...", "运行中...") : model.tr("Run", "运行")) { model.runPreview() }
+            Button(model.isRunningTask ? model.tr("Running...", "运行中...") : model.tr("Run", "运行")) { model.submitHermesPrompt() }
                 .buttonStyle(.plain)
                 .foregroundStyle(model.selectedFile == nil || model.isRunningTask ? .secondary : Color.primaryGreen)
                 .disabled(model.selectedFile == nil || model.isRunningTask)
@@ -1795,7 +1795,7 @@ private struct RunInlineBlock: View {
                     .onSubmit { model.updateRunBlockName(block, name: runName) }
                     .onChange(of: runName) { model.updateRunBlockName(block, name: $0) }
                 Spacer()
-                Button { model.runPreview(block: block) } label: { Image(systemName: "play.fill") }
+                Button { model.submitHermesPrompt(block: block) } label: { Image(systemName: "play.fill") }
                     .buttonStyle(.plain)
                     .foregroundStyle(Color.primaryGreen)
                     .disabled(model.isRunningTask)
@@ -2506,7 +2506,6 @@ private struct ProjectSettingsPanel: View {
                 Spacer()
                 Picker("", selection: $selectedSection) {
                     Text(model.tr("Memory", "记忆")).tag("Memory")
-                    Text(model.tr("Skill Trace", "Skill 追踪")).tag("Skill Trace")
                     Text(model.tr("Runtime", "运行时")).tag("Runtime")
                 }
                 .pickerStyle(.segmented)
@@ -2518,8 +2517,6 @@ private struct ProjectSettingsPanel: View {
             ScrollView {
                 if selectedSection == "Memory" {
                     memorySettings
-                } else if selectedSection == "Skill Trace" {
-                    skillTraceSettings
                 } else {
                     runtimeSettings
                 }
@@ -2559,48 +2556,6 @@ private struct ProjectSettingsPanel: View {
                         .padding(12)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .background(Color.surfaceSoft, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                }
-            }
-        }
-        .padding(18)
-    }
-
-    private var skillTraceSettings: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            SettingsSection(title: model.tr("Adaptive Skill Runner", "自适应 Skill Runner"), subtitle: model.tr("Dry-run retry trace for registered model/tool/software CLIs.", "为已注册模型/工具/软件 CLI 生成 dry-run 重试追踪。")) {
-                HStack(spacing: 10) {
-                    TextField(model.tr("skill name, e.g. excel-cli", "skill 名称，例如 excel-cli"), text: $model.skillTraceDraft)
-                        .textFieldStyle(.roundedBorder)
-                    Button(model.tr("Run Trace", "运行追踪")) {
-                        model.runAdaptiveSkillTrace(skill: model.skillTraceDraft)
-                    }
-                    .buttonStyle(PrimaryButtonStyle(compact: true))
-                }
-            }
-
-            SettingsSection(title: model.tr("Skill Retry Trace", "Skill 重试追踪"), subtitle: model.tr("Each attempt is persisted into .troner.json for audit and rollback planning.", "每次尝试都会持久化到 .troner.json 以便审计和回滚规划。")) {
-                let traces = model.memorySnapshot?.skill_retry_traces ?? []
-                if traces.isEmpty {
-                    Text(model.tr("No traces yet.", "暂无追踪。"))
-                        .foregroundStyle(Color.appSecondaryText)
-                } else {
-                    ForEach(traces) { trace in
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Text(trace.skill).font(.system(size: 13, weight: .bold))
-                                Spacer()
-                                Text(trace.status.uppercased()).font(.system(size: 10, weight: .bold)).foregroundStyle(Color.primaryGreen)
-                            }
-                            ForEach(trace.attempts) { attempt in
-                                Text("#\(attempt.attempt) \(attempt.reason): \(attempt.correction)")
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(Color.appSecondaryText)
-                            }
-                        }
-                        .padding(12)
-                        .background(.white, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.hairline.opacity(0.6), lineWidth: 1))
-                    }
                 }
             }
         }

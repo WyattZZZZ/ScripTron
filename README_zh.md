@@ -12,8 +12,8 @@
 
 ScripTron 是一个 macOS 原生 app，让你像写 Markdown 笔记一样编排和运行
 Agent 自动化任务。每个 `.tron` 文件是一份"运行单元"（agent 指令）和
-"文档单元"（静态上下文）混合的笔记本，背后是本地的工作区、Rust agent 内核，
-以及一个用于发布模型 / CLI / 技能的插件市场（TronHub）。
+"文档单元"（静态上下文）混合的笔记本，背后是本地的工作区、Rust 网关层、
+Hermes Agent，以及一个用于发布 CLI / 技能的插件市场（TronHub）。
 
 ![Workspace](docs/screenshots/workspace.png)
 
@@ -22,13 +22,13 @@ Agent 自动化任务。每个 `.tron` 文件是一份"运行单元"（agent 指
 - **原生 SwiftUI** 前端 + **Rust** 内核。不是 Electron，不是浏览器标签页。
 - **`.tron` 笔记编辑器**：运行单元、文档单元、隐藏黑板、内联表格、
   Gen 单元（自然语言 → Markdown）。
-- **多 Provider 大模型**：Anthropic、Gemini、OpenAI、DeepSeek、OpenRouter，
-  以及来自 TronHub 的任意 CLI 模型（codex、gemini-code、qwen-code…）。
-- **工具调用循环**：Agent 可以调用工作区 registry 里所有已安装的 CLI，
+- **Hermes Agent 运行时**：模型登录、供应方选择、工具和 skill 统一交给
+  Hermes 管理，不再由 ScripTron 自己保存 API key。
+- **工具调用循环**：Hermes Agent 可以调用工作区 registry 里所有已安装的 CLI，
   支持结构化参数和可审计的运行日志。
 - **TronHub 插件系统**：从
   [`WyattZZZZ/ScripTron_Extension`](https://github.com/WyattZZZZ/ScripTron_Extension)
-  一键安装模型、CLI、技能。每个插件自带 `install.sh` 和 `--action login` 流程。
+  一键安装 CLI、技能。插件需要时可自带 `install.sh`。
 - **记忆系统**：全局 + 项目级记忆持久化在 `.troner.json`
   （偏好、格式规则、术语表、长上下文笔记）。
 - **`@` 提及选择器**：把已装技能、项目文件、`.tron` 模块导出直接拽到
@@ -70,14 +70,12 @@ open dist/ScripTron.app
 
 ## 快速开始
 
-1. **连接模型。** 打开 *模型管理*，在某个 Provider 卡片（Anthropic /
-   Gemini / OpenAI / DeepSeek / OpenRouter）粘贴你的 API key，选模型，
-   点 *设为当前*。或从 TronHub 安装 CLI 模型（*同步 TronHub* → 点
-   `codex` / `gemini-code` / `qwen-code` 的 *安装* → *安装依赖* → *登录*）。
+1. **检查 Hermes。** 打开 *模型管理*，通过 Hermes 检查本地安装、登录、
+   选择模型并查看网关状态。
 2. **创建项目。** 点 *+ 新建项目* 起个名字，会自动生成一个起始 `.tron` 文件。
 3. **写单元。** 混合 `markdown` 单元（上下文）和 `run` 单元（指令）。
-   `Cmd+Enter` 运行当前 run 单元。Agent 可以访问所有已装 CLI 和技能。
-4. **迭代。** 编辑、重跑、看运行日志。Agent 可以读写项目文件、调用 CLI、
+   `Cmd+Enter` 运行当前 run 单元。Agent 可以访问已装 CLI 和 Hermes Agent skill。
+4. **迭代。** 编辑、重跑、看运行日志。Agent 可以读写项目文件、通过 Hermes 调用 CLI，
    并把结果写回隐藏黑板供下一轮运行使用。
 
 ## `.tron` 文件格式
@@ -159,7 +157,7 @@ ScripTron 点*安装*会把插件文件复制到 `.register/`，自动跑 `insta
 
 完整的分阶段计划见 [docs/UI_REFACTOR_PLAN.md](docs/UI_REFACTOR_PLAN.md)。
 Phase 0–10（Workspace UI、Project Studio、Node Library、编辑器、运行日志、
-记忆、Agent、自适应技能、`@` 提及选择器）已全部完成。
+记忆、Agent、Hermes Agent skills、`@` 提及选择器）已全部完成。
 
 ## 贡献
 

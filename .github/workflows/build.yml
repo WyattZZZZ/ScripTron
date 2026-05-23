@@ -21,6 +21,12 @@ jobs:
       - name: Validate CI workflow contract
         run: scripts/ci/assert-workflow.sh
 
+      - name: Ensure legacy adaptive skill is removed
+        run: scripts/ci/assert-no-adaptive-skill.sh
+
+      - name: Ensure Hermes stage 1 migration contract
+        run: scripts/ci/assert-hermes-stage1.sh
+
   rust:
     name: Rust Workspace
     runs-on: ubuntu-24.04

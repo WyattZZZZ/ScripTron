@@ -159,7 +159,6 @@ final class AppModel: ObservableObject {
     @Published var selectedMentions: [MentionItem] = []
     @Published var agentBusy = false
     @Published var appLanguage = UserDefaults.standard.string(forKey: "scriptron.appLanguage") ?? "en"
-    @Published var skillTraceDraft = "excel-cli"
     @Published var chatMessages: [ChatMessage] = [
         ChatMessage(role: "system", content: "Workspace Agent is scoped to project planning, file organization, CLI setup, and model configuration. It should not promise sharing or cloud collaboration features.")
     ]
@@ -330,16 +329,6 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func storeApiKey(_ key: String, for provider: String) {
-        do {
-            try bridge.callVoid("store_api_key", params: ["provider": provider, "api_key": key])
-            loadProviderStatuses()
-            status = "\(provider) 已连接"
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-
     func runPluginLogin(_ name: String) {
         pluginLoginRunning = name
         status = "正在登录 \(name)..."
@@ -364,19 +353,6 @@ final class AppModel: ObservableObject {
                     self.status = "\(name) 登录失败"
                 }
             }
-        }
-    }
-
-    func disconnectProvider(_ provider: String) {
-        do {
-            try bridge.callVoid("disconnect_provider", params: ["provider": provider])
-            loadProviderStatuses()
-            if activeConfig?.provider == provider {
-                loadActiveConfig()
-            }
-            status = "\(provider) 已断开"
-        } catch {
-            errorMessage = error.localizedDescription
         }
     }
 
@@ -708,25 +684,6 @@ final class AppModel: ObservableObject {
         case .skillManagement: tr("Skill Management", "Skill 管理")
         case .modelManagement: tr("Model Management", "模型管理")
         case .settings: tr("Settings", "设置")
-        }
-    }
-
-    func runAdaptiveSkillTrace(skill: String) {
-        do {
-            let _: SkillRetryTrace = try bridge.call(
-                "run_adaptive_skill",
-                params: [
-                    "skill": skill,
-                    "input": ["requested_from": "Project Settings"],
-                    "max_retries": 3,
-                    "dry_run": true
-                ],
-                as: SkillRetryTrace.self
-            )
-            loadMemorySnapshot()
-            status = "Skill trace recorded"
-        } catch {
-            errorMessage = error.localizedDescription
         }
     }
 
@@ -1561,11 +1518,11 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func runPreview() {
-        runPreview(block: nil)
+    func submitHermesPrompt() {
+        submitHermesPrompt(block: nil)
     }
 
-    func runPreview(block: DocumentBlock?) {
+    func submitHermesPrompt(block: DocumentBlock?) {
         guard let file = selectedFile else {
             errorMessage = "No .tron file is open."
             return
@@ -1577,11 +1534,11 @@ final class AppModel: ObservableObject {
         }
         isRunningTask = true
         runEventsBlockID = block?.id
-        status = "Running task"
+        status = "Submitting Hermes prompt"
         runEvents = []
         let blockKey = block.map { runEventKey(for: $0) }
         if let block {
-            let startEvent = RunEvent.local(type: "warning", content: "Run started. Waiting for model and tools...")
+            let startEvent = RunEvent.local(type: "warning", content: "Hermes gateway submission started...")
             runEventsByBlockID[block.id] = [startEvent]
             if let blockKey {
                 runEventsByBlockKey[blockKey] = [startEvent]
@@ -1602,13 +1559,13 @@ final class AppModel: ObservableObject {
             do {
                 let decodedCells = try JSONDecoder().decode([TronCell].self, from: cellsData)
                 let blackboard = try JSONSerialization.jsonObject(with: blackboardData)
-                try bridge.callVoid("run_task_preview", params: [
+                try bridge.callVoid("hermes_prompt_submit", params: [
                     "path": filePath,
                     "cells": decodedCells.map { ["run": $0.run, "content": $0.content] },
                     "project_path": projectPath,
                     "blackboard": blackboard
                 ])
-                let events = try bridge.call("poll_events", as: [RunEvent].self)
+                let events = try bridge.call("hermes_poll_events", as: [RunEvent].self)
                 let refreshedFile = try? bridge.call("open_tron_file", params: ["path": filePath], as: TronFile.self)
                 await MainActor.run {
                     if let refreshedFile {
@@ -1630,7 +1587,7 @@ final class AppModel: ObservableObject {
                         }
                     }
                     self.clearActiveTabDirty()
-                    self.status = "Run complete"
+                    self.status = "Hermes prompt submitted"
                     self.isRunningTask = false
                 }
             } catch {

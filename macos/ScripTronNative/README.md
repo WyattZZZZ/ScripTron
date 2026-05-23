@@ -68,12 +68,12 @@ The current FFI bridge exposes:
 - `get_active_config`
 - `set_active_config`
 - `build_task`
-- `run_task_preview`
-- `poll_events`
+- `hermes_prompt_submit`
+- `hermes_poll_events`
 
-`run_task_preview` and `poll_events` currently return migration placeholder
-events. Real agent execution should be wired through the Hermes Gateway methods
-listed in `TODO_HERMES_MIGRATION.md`.
+`hermes_prompt_submit` and `hermes_poll_events` currently return migration
+placeholder events while Stage 1 replaces the legacy local preview runtime with
+Hermes Gateway semantics.
 
 ## Workspace Metadata
 
@@ -126,6 +126,6 @@ list_workspace_files -> []
 create_tron_file -> ok
 save_tron_file -> ok
 open_tron_file -> edited cells returned
-run_task_preview -> queued 3 events
-poll_events -> thinking/tool_result/complete
+hermes_prompt_submit -> queued 3 events
+hermes_poll_events -> warning/text/complete
 ```

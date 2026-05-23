@@ -2,7 +2,7 @@ use chrono::Utc;
 use process_runner::{ProcessConfig, ProcessRunner};
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::{BTreeMap, BTreeSet, HashMap},
+    collections::BTreeMap,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -194,14 +194,6 @@ impl ExecutionEvent {
         }
     }
 
-    fn error(message: impl Into<String>) -> Self {
-        Self {
-            event_type: "error".into(),
-            content: None,
-            message: Some(message.into()),
-        }
-    }
-
     fn text(content: impl Into<String>) -> Self {
         Self {
             event_type: "text".into(),
@@ -254,32 +246,11 @@ pub struct RegisterInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SkillRetryAttempt {
-    pub attempt: u32,
-    pub status: String,
-    pub reason: String,
-    pub correction: String,
-    pub input: serde_json::Value,
-    pub output: String,
-    pub created_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SkillRetryTrace {
-    pub id: String,
-    pub skill: String,
-    pub status: String,
-    pub attempts: Vec<SkillRetryAttempt>,
-    pub created_at: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TronerMemory {
     pub schema_version: u32,
     pub global_memory: GlobalMemory,
     pub projects: BTreeMap<String, ProjectMemory>,
     pub register: RegisterInfo,
-    pub skill_retry_traces: Vec<SkillRetryTrace>,
     pub audit_log: Vec<serde_json::Value>,
 }
 
@@ -288,7 +259,6 @@ pub struct MemorySnapshot {
     pub global_memory: GlobalMemory,
     pub project_memory: ProjectMemory,
     pub effective_prompt: String,
-    pub skill_retry_traces: Vec<SkillRetryTrace>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -346,7 +316,7 @@ pub struct SkillIndexEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RunTaskPreviewResult {
+pub struct HermesPromptSubmitResult {
     pub events: Vec<ExecutionEvent>,
     pub blackboard: serde_json::Value,
     pub log_path: String,
@@ -624,14 +594,6 @@ impl ScriptronCore {
         Ok(result.combined_output())
     }
 
-    pub async fn store_api_key(&self, _provider: String, _api_key: String) -> Result<(), String> {
-        Err("Provider authentication has moved to the official Hermes Agent flow.".into())
-    }
-
-    pub async fn disconnect_provider(&self, _provider: String) -> Result<(), String> {
-        Err("Provider authentication is now managed by Hermes Agent.".into())
-    }
-
     pub async fn get_active_config(&self) -> ActiveConfig {
         std::fs::read_to_string(&self.config_path)
             .ok()
@@ -664,39 +626,24 @@ impl ScriptronCore {
             .unwrap_or_else(|_| serde_json::json!({}))
     }
 
-    pub async fn run_tron_task(
-        &self,
-        cells: Vec<TronCell>,
-        project_path: String,
-        blackboard: Option<serde_json::Value>,
-    ) -> Result<Vec<ExecutionEvent>, String> {
-        let project_path = PathBuf::from(project_path);
-        let blackboard = blackboard.unwrap_or_else(|| serde_json::json!({}));
-        self.run_orchestrated_tron_task(cells, project_path, blackboard)
-            .await
-    }
-
-    pub async fn run_tron_task_preview(
+    pub async fn hermes_prompt_submit(
         &self,
         cells: Vec<TronCell>,
         project_path: String,
         blackboard: Option<serde_json::Value>,
         tron_path: Option<String>,
-    ) -> Result<RunTaskPreviewResult, String> {
+    ) -> Result<HermesPromptSubmitResult, String> {
         let mut blackboard = blackboard.unwrap_or_else(|| serde_json::json!({}));
         let log_path = run_log_path(tron_path.as_deref(), &project_path);
-        let mut events = vec![ExecutionEvent::warning(format!(
-            "Run started. Log file: {}",
-            log_path.display()
-        ))];
-        events.extend(
-            self.run_orchestrated_tron_task(
-                cells.clone(),
-                PathBuf::from(project_path),
-                blackboard.clone(),
-            )
-            .await?,
-        );
+        let prompt_text = build_hermes_prompt_text(&cells, &project_path)?;
+        let events = vec![
+            ExecutionEvent::warning(format!(
+                "Hermes prompt submitted. Log file: {}",
+                log_path.display()
+            )),
+            ExecutionEvent::text(prompt_text.clone()),
+            ExecutionEvent::complete(),
+        ];
         let response = events
             .iter()
             .filter_map(|event| match event {
@@ -719,83 +666,11 @@ impl ScriptronCore {
                 .await?;
         }
         write_run_log(&log_path, &events).await?;
-        Ok(RunTaskPreviewResult {
+        Ok(HermesPromptSubmitResult {
             events,
             blackboard,
             log_path: log_path.to_string_lossy().into_owned(),
         })
-    }
-
-    async fn run_orchestrated_tron_task(
-        &self,
-        cells: Vec<TronCell>,
-        project_path: PathBuf,
-        _blackboard: serde_json::Value,
-    ) -> Result<Vec<ExecutionEvent>, String> {
-        let graph = build_function_graph(&cells, &project_path)?;
-        if graph.roots.is_empty() {
-            return Ok(vec![
-                ExecutionEvent::error("No run cells to execute."),
-                ExecutionEvent::complete(),
-            ]);
-        }
-
-        let plan = build_execution_plan(&graph)?;
-        let mut outputs: HashMap<String, String> = HashMap::new();
-
-        for level in plan {
-            for name in level {
-                let function = graph
-                    .functions
-                    .get(&name)
-                    .cloned()
-                    .ok_or_else(|| format!("Missing function '{name}'"))?;
-                let dependency_context = graph
-                    .refs
-                    .get(&name)
-                    .cloned()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .filter_map(|dep| outputs.get(&dep).map(|out| (dep, out.clone())))
-                    .map(|(dep, out)| format!("### Referenced function: {dep}\n\n{out}"))
-                    .collect::<Vec<_>>();
-                let context = graph
-                    .context
-                    .iter()
-                    .cloned()
-                    .chain(function.context.iter().cloned())
-                    .chain(dependency_context)
-                    .collect::<Vec<_>>()
-                    .join("\n\n");
-                let output = format!(
-                    "Hermes migration placeholder for `{name}`.\n\nProject: {}\n\nContext:\n{}\n\nPrompt:\n{}",
-                    project_path.display(),
-                    context,
-                    function.body
-                );
-                outputs.insert(name, output);
-            }
-        }
-
-        let mut response = String::new();
-        for root in &graph.roots {
-            if let Some(output) = outputs.get(root) {
-                if graph.roots.len() > 1 {
-                    response.push_str(&format!("## {root}\n\n{output}\n\n"));
-                } else {
-                    response.push_str(output);
-                }
-            }
-        }
-
-        let events = vec![
-            ExecutionEvent::warning(
-                "Custom agent runtime was removed. Hermes Gateway integration is pending.",
-            ),
-            ExecutionEvent::text(response.trim().to_string()),
-            ExecutionEvent::complete(),
-        ];
-        Ok(events)
     }
 
     pub async fn get_memory_snapshot(
@@ -812,7 +687,6 @@ impl ScriptronCore {
             global_memory: memory.global_memory,
             project_memory,
             effective_prompt,
-            skill_retry_traces: memory.skill_retry_traces,
         })
     }
 
@@ -880,80 +754,6 @@ impl ScriptronCore {
             .push(audit_event("memory.project.update", serde_json::json!({})));
         self.save_troner_memory(&memory).await?;
         Ok(memory)
-    }
-
-    pub async fn run_adaptive_skill(
-        &self,
-        skill: String,
-        input: serde_json::Value,
-        max_retries: u32,
-        dry_run: bool,
-    ) -> Result<SkillRetryTrace, String> {
-        let mut memory = self.load_troner_memory().await?;
-        let registry = self.registry.read().await;
-        let installed = registry.get_tool(&skill).is_some();
-        drop(registry);
-
-        let mut attempts = Vec::new();
-        let started = now();
-        let mut status = "failed".to_string();
-        let max_retries = max_retries.clamp(1, 5);
-
-        for attempt in 1..=max_retries {
-            let (attempt_status, reason, correction, output) = if !installed {
-                (
-                    "failed",
-                    "command_not_registered",
-                    "Check .register for a matching model/tool CLI manifest before retrying.",
-                    format!("CLI skill '{skill}' is not registered."),
-                )
-            } else if dry_run {
-                (
-                    "planned",
-                    "dry_run",
-                    "Validated registry presence without executing the command.",
-                    format!("Dry-run accepted for skill '{skill}'."),
-                )
-            } else {
-                (
-                    "planned",
-                    "execution_deferred",
-                    "Execution is deferred to the Project Orchestrator safety gate.",
-                    format!("Skill '{skill}' is registered and ready for orchestrated execution."),
-                )
-            };
-
-            attempts.push(SkillRetryAttempt {
-                attempt,
-                status: attempt_status.into(),
-                reason: reason.into(),
-                correction: correction.into(),
-                input: input.clone(),
-                output,
-                created_at: now(),
-            });
-
-            if installed {
-                status = if dry_run { "planned" } else { "ready" }.into();
-                break;
-            }
-        }
-
-        let trace = SkillRetryTrace {
-            id: format!("skill-{}", Utc::now().timestamp_millis()),
-            skill,
-            status,
-            attempts,
-            created_at: started,
-        };
-        memory.skill_retry_traces.insert(0, trace.clone());
-        memory.skill_retry_traces.truncate(50);
-        memory.audit_log.push(audit_event(
-            "skill.retry.trace",
-            serde_json::to_value(&trace).unwrap_or_default(),
-        ));
-        self.save_troner_memory(&memory).await?;
-        Ok(trace)
     }
 
     pub async fn search_mentions(
@@ -1056,155 +856,46 @@ impl ScriptronCore {
     }
 }
 
-#[derive(Debug, Clone)]
-struct TronFunction {
-    body: String,
-    context: Vec<String>,
-}
-
-#[derive(Debug)]
-struct FunctionGraph {
-    roots: Vec<String>,
-    functions: HashMap<String, TronFunction>,
-    refs: HashMap<String, Vec<String>>,
-    context: Vec<String>,
-}
-
 const RUN_NAME_PREFIX: &str = "[[scriptron:run-name]]";
-const GEN_CELL_PREFIX: &str = "[[scriptron:gen-markdown]]";
 
-fn build_function_graph(cells: &[TronCell], project_path: &Path) -> Result<FunctionGraph, String> {
-    let current_context = cells
+fn build_hermes_prompt_text(cells: &[TronCell], project_path: &str) -> Result<String, String> {
+    let context = cells
         .iter()
         .filter(|cell| !cell.run)
         .map(|cell| cell.content.trim().to_string())
         .filter(|content| !content.is_empty())
         .collect::<Vec<_>>();
-    let mut roots = Vec::new();
-    let mut functions = HashMap::<String, TronFunction>::new();
-
-    for (index, cell) in cells.iter().enumerate() {
-        if !cell.run || cell.content.starts_with(GEN_CELL_PREFIX) {
-            continue;
-        }
-        let (name, body) = parse_run_function(&cell.content, index);
-        roots.push(name.clone());
-        functions.insert(
-            name.clone(),
-            TronFunction {
-                body,
-                context: Vec::new(),
-            },
-        );
-    }
-
-    for (path, file_cells) in project_tron_cells(project_path)? {
-        let file_context = file_cells
-            .iter()
-            .filter(|cell| !cell.run)
-            .map(|cell| cell.content.trim().to_string())
-            .filter(|content| !content.is_empty())
-            .collect::<Vec<_>>();
-        for (index, cell) in file_cells.iter().enumerate() {
-            if !cell.run || cell.content.starts_with(GEN_CELL_PREFIX) {
-                continue;
-            }
-            let (name, body) = parse_run_function(&cell.content, index);
-            functions
-                .entry(name.clone())
-                .or_insert_with(|| TronFunction {
-                    body,
-                    context: vec![format!(
-                        "Context from referenced .tron file {}:\n{}",
-                        path.display(),
-                        file_context.join("\n\n")
-                    )],
-                });
-        }
-    }
-
-    let names = functions.keys().cloned().collect::<Vec<_>>();
-    let refs = functions
+    let prompts = cells
         .iter()
-        .map(|(name, function)| {
-            (
-                name.clone(),
-                extract_known_function_refs(&function.body, &names, name),
-            )
-        })
-        .collect::<HashMap<_, _>>();
+        .enumerate()
+        .filter(|(_, cell)| cell.run)
+        .map(|(index, cell)| parse_run_prompt(&cell.content, index))
+        .filter(|(_, body)| !body.trim().is_empty())
+        .collect::<Vec<_>>();
+    if prompts.is_empty() {
+        return Err("No run cells to submit to Hermes.".into());
+    }
 
-    Ok(FunctionGraph {
-        roots,
-        functions,
-        refs,
-        context: current_context,
-    })
+    let mut out = vec![
+        "Hermes Gateway submission prepared.".to_string(),
+        format!("Project: {}", project_path),
+    ];
+    if !context.is_empty() {
+        out.push(format!("Context cells:\n{}", context.join("\n\n---\n\n")));
+    }
+    for (name, body) in prompts {
+        out.push(format!("Prompt [{}]:\n{}", name, body));
+    }
+    Ok(out.join("\n\n"))
 }
 
-fn build_execution_plan(graph: &FunctionGraph) -> Result<Vec<Vec<String>>, String> {
-    let mut needed = BTreeSet::new();
-    let mut depths = HashMap::<String, usize>::new();
-    let mut visiting = Vec::<String>::new();
-
-    fn visit(
-        name: &str,
-        graph: &FunctionGraph,
-        needed: &mut BTreeSet<String>,
-        depths: &mut HashMap<String, usize>,
-        visiting: &mut Vec<String>,
-    ) -> Result<usize, String> {
-        if let Some(depth) = depths.get(name) {
-            needed.insert(name.to_string());
-            return Ok(*depth);
-        }
-        if visiting.iter().any(|item| item == name) {
-            let mut cycle = visiting.clone();
-            cycle.push(name.to_string());
-            return Err(format!(
-                "Circular run-cell reference detected: {}",
-                cycle.join(" -> ")
-            ));
-        }
-        if !graph.functions.contains_key(name) {
-            return Err(format!("Missing referenced run-cell function: {name}"));
-        }
-        visiting.push(name.to_string());
-        let mut max_child = 0;
-        for dep in graph.refs.get(name).cloned().unwrap_or_default() {
-            max_child = max_child.max(visit(&dep, graph, needed, depths, visiting)?);
-        }
-        visiting.pop();
-        let depth = max_child + 1;
-        if depth > 5 {
-            return Err(format!(
-                "Reference tree is deeper than 5 levels near {name}."
-            ));
-        }
-        depths.insert(name.to_string(), depth);
-        needed.insert(name.to_string());
-        Ok(depth)
-    }
-
-    for root in &graph.roots {
-        visit(root, graph, &mut needed, &mut depths, &mut visiting)?;
-    }
-
-    let mut by_depth = BTreeMap::<usize, Vec<String>>::new();
-    for name in needed {
-        let depth = depths.get(&name).copied().unwrap_or(1);
-        by_depth.entry(depth).or_default().push(name);
-    }
-    Ok(by_depth.into_values().collect())
-}
-
-fn parse_run_function(content: &str, index: usize) -> (String, String) {
+fn parse_run_prompt(content: &str, index: usize) -> (String, String) {
     let mut lines = content.lines().collect::<Vec<_>>();
     if let Some(first) = lines.first() {
         if first.starts_with(RUN_NAME_PREFIX) {
             let name = first.trim_start_matches(RUN_NAME_PREFIX).trim().to_string();
             lines.remove(0);
-            let body = lines.join("\n").trim().to_string();
+            let body = strip_scriptron_metadata(&lines.join("\n"));
             if !name.is_empty() {
                 return (name, body);
             }
@@ -1217,55 +908,21 @@ fn parse_run_function(content: &str, index: usize) -> (String, String) {
             .find(|line| !line.is_empty())
             .map(|line| line.chars().take(40).collect::<String>())
             .unwrap_or_else(|| format!("run_{}", index + 1)),
-        content.trim().to_string(),
+        strip_scriptron_metadata(content),
     )
 }
 
-fn extract_known_function_refs(content: &str, names: &[String], self_name: &str) -> Vec<String> {
-    let mut out = names
-        .iter()
-        .filter(|name| name.as_str() != self_name)
-        .filter(|name| {
-            content.contains(&format!("@{name}")) || content.contains(&format!("#{name}"))
+fn strip_scriptron_metadata(content: &str) -> String {
+    content
+        .lines()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            !trimmed.starts_with("[[scriptron:")
         })
-        .cloned()
-        .collect::<Vec<_>>();
-    out.sort();
-    out.dedup();
-    out
-}
-
-fn project_tron_cells(project_path: &Path) -> Result<Vec<(PathBuf, Vec<TronCell>)>, String> {
-    fn walk(dir: &Path, out: &mut Vec<(PathBuf, Vec<TronCell>)>) -> Result<(), String> {
-        let entries = match std::fs::read_dir(dir) {
-            Ok(entries) => entries,
-            Err(_) => return Ok(()),
-        };
-        for entry in entries {
-            let entry = entry.map_err(|e| e.to_string())?;
-            let path = entry.path();
-            if path
-                .file_name()
-                .and_then(|name| name.to_str())
-                .map(|name| name.starts_with('.'))
-                .unwrap_or(false)
-            {
-                continue;
-            }
-            if path.is_dir() {
-                walk(&path, out)?;
-            } else if path.extension().and_then(|ext| ext.to_str()) == Some("tron") {
-                if let Ok(file) = tron_parser::parse_file(&path) {
-                    out.push((path, file.cells));
-                }
-            }
-        }
-        Ok(())
-    }
-
-    let mut out = Vec::new();
-    walk(project_path, &mut out)?;
-    Ok(out)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .trim()
+        .to_string()
 }
 
 fn update_blackboard_notes(blackboard: &mut serde_json::Value, response: &str, source: &str) {
@@ -1834,7 +1491,6 @@ fn default_troner_memory() -> TronerMemory {
             path: ".register".into(),
             description: "Workspace-local registry for model CLIs and tool/software CLIs.".into(),
         },
-        skill_retry_traces: Vec::new(),
         audit_log: Vec::new(),
     }
 }

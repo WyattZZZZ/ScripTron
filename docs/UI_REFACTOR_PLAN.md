@@ -249,27 +249,16 @@
 
 ---
 
-## Phase 9：Adaptive Skill 自修复机制（1~1.5 天）
+## Phase 9：Skill 调用迁移到 Hermes Agent（已调整）
 
-- [x] 新增 `adaptive_skill_runner`：
-  - [x] 每次调用 skill 失败后自动重试（指数退避 + 最大重试次数）。
-  - [x] 每次失败都记录失败原因（参数错误、命令不存在、权限问题、超时等）。
-  - [x] 重试前自动修改 skill 调用参数（基于错误类型修正）。
-- [x] 新增 skill 自更新流程：
-  - [x] 若连续失败达到阈值，触发“skill patch”流程，自动重写该 skill 的参数映射或命令模板。
-  - [x] Patch 后再次执行验证，直到成功或达到安全终止条件。
-  - [x] 将每次 patch 版本写入 blackboard 与 skill 版本历史（可回滚）。
-- [x] 终止与安全策略：
-  - [x] 设置最大重试轮次（防止无限循环）。
-  - [x] 对高风险操作必须先 dry-run 再正式执行。
-  - [x] patch 不可越权（禁止修改未授权路径与未授权命令）。
-- [x] 可观测性：
-  - [x] UI 增加“Skill Retry Trace”面板，展示每轮失败原因与修正动作。
-  - [x] blackboard 持久化每轮尝试输入、输出、错误、修复 diff。
+- [x] 删除本地 skill 自修复/重试运行器。
+- [x] 删除本地 skill patch、重试追踪与 Settings 入口。
+- [x] skill 调用统一交给官方 Hermes Agent 运行时处理。
 
 **验收标准**
-- skill 首次失败后，系统能够自动修复调用并重试，直到成功或达到安全阈值。
-- 每次自动修复都有完整审计日志，可追踪、可回滚。
+- ScripTron 不再维护本地 skill 自修复逻辑。
+- UI 不再展示本地 skill 重试追踪面板。
+- 新的 skill 执行路径通过 Hermes Agent 网关语义接入。
 
 ---
 

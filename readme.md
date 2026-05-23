@@ -13,8 +13,8 @@
 ScripTron is a native macOS app that lets you author, run, and iterate on agentic
 automations as simple Markdown-like documents. Each `.tron` file is a notebook of
 **run cells** (agent instructions) and **document cells** (static context),
-backed by a local-first workspace, a Rust agent core, and a plugin registry
-(TronHub) for models, CLIs, and skills.
+backed by a local-first workspace, a Rust gateway layer, Hermes Agent, and a
+plugin registry (TronHub) for CLIs and skills.
 
 ![Workspace](docs/screenshots/workspace.png)
 
@@ -23,14 +23,13 @@ backed by a local-first workspace, a Rust agent core, and a plugin registry
 - **Native SwiftUI** front-end, **Rust** core. No Electron, no browser tab.
 - **`.tron` notebook editor**: run cells, document cells, hidden blackboard,
   inline tables, gen cells (natural language → Markdown).
-- **Multi-provider LLM**: Anthropic, Gemini, OpenAI, DeepSeek, OpenRouter, plus
-  any CLI model from TronHub (codex, gemini-code, qwen-code, …).
-- **Tool use loop**: agents can call installed CLIs from the workspace
+- **Hermes Agent runtime**: model login, provider selection, tools, and skills
+  are managed through Hermes instead of app-owned API-key cards.
+- **Tool use loop**: Hermes Agent can call installed CLIs from the workspace
   registry, with structured arguments and auditable run logs.
-- **TronHub plugin system**: install models, CLIs, and skills from
+- **TronHub plugin system**: install CLIs and skills from
   [`WyattZZZZ/ScripTron_Extension`](https://github.com/WyattZZZZ/ScripTron_Extension)
-  with one click. Each plugin ships its own `install.sh` and `--action login`
-  flow.
+  with one click. Each plugin ships its own `install.sh` when needed.
 - **Memory system**: global + per-project memory persisted in `.troner.json`
   (preferences, format rules, glossary, long-context notes).
 - **`@` mention picker**: pull installed skills, project files, and `.tron`
@@ -73,19 +72,16 @@ the dylib into `dist/ScripTron.app`.
 
 ## Quick start
 
-1. **Connect a model.** Open *Model Management*, paste your API key into one of
-   the provider cards (Anthropic / Gemini / OpenAI / DeepSeek / OpenRouter),
-   pick a model, click *Set Active*. Or install a CLI model from TronHub
-   (*Sync TronHub* → click *Install* on `codex`/`gemini-code`/`qwen-code`,
-   then *Install Deps* → *Login*).
+1. **Check Hermes.** Open *Model Management* and use Hermes to check the local
+   install, sign in, pick a model, and inspect gateway status.
 2. **Create a project.** Click *+ New Project*, enter a name. A starter `.tron`
    file is created.
 3. **Author cells.** Mix `markdown` cells (context) and `run` cells
    (instructions). `Cmd+Enter` runs the active run cell. The agent has access
-   to all installed CLIs and skills.
+   to installed CLIs and Hermes Agent skills.
 4. **Iterate.** Edit cells, re-run, watch the run log. Agents can read/write
-   files in the project, call CLIs, and update the hidden blackboard for the
-   next run.
+   files in the project, call CLIs through Hermes, and update the hidden
+   blackboard for the next run.
 
 ## `.tron` format
 
@@ -170,7 +166,7 @@ runs `./run.sh --action login`.
 
 See [docs/UI_REFACTOR_PLAN.md](docs/UI_REFACTOR_PLAN.md) for the full phased
 plan. Phases 0–10 (Workspace UI, Project Studio, Node Library, Editor, Run Log,
-Memory, Agent, Adaptive Skill, `@` mention picker) are complete.
+Memory, Agent, Hermes Agent skills, and `@` mention picker) are complete.
 
 ## Contributing
 
