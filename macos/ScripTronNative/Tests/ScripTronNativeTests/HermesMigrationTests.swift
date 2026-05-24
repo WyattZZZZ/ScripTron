@@ -286,7 +286,13 @@ final class HermesMigrationTests: XCTestCase {
             "hermes_clarify_respond",
             "hermes_secret_respond",
             "hermes_command_catalog",
-            "hermes_command_dispatch"
+            "hermes_command_dispatch",
+            "hermes_skills_browse",
+            "hermes_skills_search",
+            "hermes_skills_install",
+            "hermes_skills_remove",
+            "hermes_skills_update",
+            "hermes_skill_sources"
         ])
     }
 }

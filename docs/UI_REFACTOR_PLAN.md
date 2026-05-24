@@ -254,11 +254,26 @@
 - [x] 删除本地 skill 自修复/重试运行器。
 - [x] 删除本地 skill patch、重试追踪与 Settings 入口。
 - [x] skill 调用统一交给官方 Hermes Agent 运行时处理。
+- [x] CLI / Skill 市场拆成两个来源分区：
+  - [x] `Hermes Official / Hub`：Hermes 官方内置、optional、trusted、community skills。
+  - [x] `TronHub`：ScripTron 自有扩展、项目模板、`.tron` workflow pack、兼容层资源。
+- [x] CLI / Skill 页面统一增加：
+  - [x] 搜索框。
+  - [x] 来源 segmented control。
+  - [x] 分类栏目/标签：All、Software Dev、Creative、Research、MLOps、Productivity、AI Agents、DevOps、Security、Apple 等。
+  - [x] 卡片展示 source、trust level、category、platform、installed state、是否包装外部 CLI。
+- [x] 对 Hermes-compatible 的 TronHub skill，优先提供“安装到 Hermes”的动作，而不是让 ScripTron 自己执行 skill。
+
+**Stage 1 closure**
+- 已用 dummy Rust bridge 覆盖单元测试与真实 macOS UI smoke test。
+- Phase 2 起需要替换 dummy/fixture catalog 为 Hermes Gateway JSON-RPC 与 Hermes skills browse/search/install 的真实数据源。
 
 **验收标准**
 - ScripTron 不再维护本地 skill 自修复逻辑。
 - UI 不再展示本地 skill 重试追踪面板。
 - 新的 skill 执行路径通过 Hermes Agent 网关语义接入。
+- CLI / Skill 市场可以在 `Hermes Official / Hub` 与 `TronHub` 两个来源之间切换、搜索和按分类过滤。
+- 用户能看清一个扩展由 Hermes 运行、由 TronHub 提供，还是仅属于 ScripTron workspace。
 
 ---
 

@@ -1799,6 +1799,8 @@ private struct RunInlineBlock: View {
                     .buttonStyle(.plain)
                     .foregroundStyle(Color.primaryGreen)
                     .disabled(model.isRunningTask)
+                RunCellActionMenu(block: block)
+                    .environmentObject(model)
                 Button { model.deleteDocumentBlock(block) } label: { Image(systemName: "trash") }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
@@ -1860,6 +1862,53 @@ private struct RunInlineBlock: View {
     }
 }
 
+private struct RunCellActionMenu: View {
+    @EnvironmentObject private var model: AppModel
+    let block: AppModel.DocumentBlock
+    private let menu = RunCellActionMenuModel.default
+
+    var body: some View {
+        Menu {
+            ForEach(menu.items, id: \.method) { item in
+                Button {
+                    dispatch(item)
+                } label: {
+                    Label(item.title, systemImage: item.icon)
+                }
+            }
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .menuStyle(.borderlessButton)
+        .buttonStyle(.plain)
+        .foregroundStyle(Color.appSecondaryText)
+        .disabled(model.isRunningTask)
+    }
+
+    private func dispatch(_ item: HermesRunCommandItem) {
+        switch item.method {
+        case "prompt.submit":
+            model.submitHermesPrompt(block: block)
+        case "prompt.background":
+            model.status = model.tr("Hermes background task dispatch is pending.", "Hermes 后台任务分发尚未接入。")
+        case "session.steer":
+            model.status = model.tr("Hermes session steering is pending.", "Hermes 会话引导尚未接入。")
+        case "session.interrupt":
+            model.status = model.tr("Hermes session interrupt is pending.", "Hermes 会话中断尚未接入。")
+        case "session.compress":
+            model.status = model.tr("Hermes session compression is pending.", "Hermes 会话压缩尚未接入。")
+        case "session.branch":
+            model.status = model.tr("Hermes session branching is pending.", "Hermes 会话分支尚未接入。")
+        case "session.status":
+            model.status = model.tr("Hermes gateway status is pending.", "Hermes 网关状态尚未接入。")
+        case "session.usage":
+            model.status = model.tr("Hermes usage reporting is pending.", "Hermes 用量报告尚未接入。")
+        default:
+            model.status = item.title
+        }
+    }
+}
+
 private struct RunEventsPanel: View {
     @EnvironmentObject private var model: AppModel
     let block: AppModel.DocumentBlock
@@ -1870,15 +1919,23 @@ private struct RunEventsPanel: View {
     }
 
     private var responseEvents: [RunEvent] {
-        events.filter { $0.type == "text" }
+        RunEventPresentation.sections(for: events).response
     }
 
     private var logEvents: [RunEvent] {
-        events.filter { $0.type != "text" && $0.type != "complete" }
+        RunEventPresentation.sections(for: events).log
+    }
+
+    private var delegationEvents: [RunEvent] {
+        RunEventPresentation.sections(for: events).delegations
+    }
+
+    private var approvalEvents: [RunEvent] {
+        RunEventPresentation.sections(for: events).approvals
     }
 
     var body: some View {
-        if !responseEvents.isEmpty || !logEvents.isEmpty {
+        if !responseEvents.isEmpty || !logEvents.isEmpty || !delegationEvents.isEmpty || !approvalEvents.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 HStack {
                     Text(model.tr("Response", "响应"))
@@ -1918,6 +1975,36 @@ private struct RunEventsPanel: View {
                         }
                     }
                     .frame(maxHeight: 260)
+                }
+                if !delegationEvents.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(model.tr("Agents", "Agents"))
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(Color.appSecondaryText)
+                        ForEach(delegationEvents) { event in
+                            Text(eventText(event) ?? event.type)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(Color.appText)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(8)
+                                .background(.white.opacity(0.62), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        }
+                    }
+                }
+                if !approvalEvents.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(model.tr("Needs Input", "需要输入"))
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(Color.appSecondaryText)
+                        ForEach(approvalEvents) { event in
+                            Text(eventText(event) ?? event.type)
+                                .font(.system(size: 11, weight: .semibold))
+                                .foregroundStyle(Color.appText)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(8)
+                                .background(Color.primaryGreen.opacity(0.08), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                        }
+                    }
                 }
                 if showLog {
                     ScrollView {

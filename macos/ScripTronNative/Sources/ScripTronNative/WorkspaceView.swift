@@ -359,27 +359,51 @@ private struct WorkspaceActionButton: View {
 
 private struct CLIMarketView: View {
     @EnvironmentObject private var model: AppModel
+    @State private var source: ExtensionCatalogSource = .tronHub
+    @State private var category = "All"
+    @State private var query = ""
 
-    private var items: [TronhubEntry] { model.tronhubClis }
+    private var catalog: ExtensionCatalogState {
+        ExtensionCatalogState(items: ExtensionCatalogFixtures.hermesCLIItems + model.tronhubClis.map(ExtensionCatalogFixtures.fromTronhub))
+    }
+
+    private var visibleItems: [ExtensionCatalogItem] {
+        catalog.filtered(source: source, category: category, query: query)
+    }
 
     var body: some View {
-        ManagementPage(title: model.tr("CLI Market", "CLI 市场"), subtitle: model.tr("Install tool and software CLIs from TronHub. Model providers are managed separately in Model Management.", "从 TronHub 安装工具和软件 CLI。模型 Provider 在模型管理中单独管理。")) {
+        ManagementPage(title: model.tr("CLI Market", "CLI 市场"), subtitle: model.tr("Browse Hermes-managed CLI wrappers and TronHub workspace CLIs.", "浏览 Hermes 管理的 CLI wrapper 与 TronHub 工作区 CLI。")) {
             HStack {
-                ManagementPill(model.tr("Remote", "远程仓库"), value: "ScripTron_Extension")
-                ManagementPill(model.tr("Available", "可用"), value: "\(items.count)")
+                ManagementPill(model.tr("Source", "来源"), value: source.rawValue)
+                ManagementPill(model.tr("Available", "可用"), value: "\(visibleItems.count)")
                 Spacer()
                 Button { model.syncTronhub() } label: { Label(model.tr("Sync TronHub", "同步 TronHub"), systemImage: "arrow.triangle.2.circlepath") }
                     .buttonStyle(ManagementButtonStyle(primary: true))
             }
+            ExtensionCatalogControls(
+                source: $source,
+                category: $category,
+                query: $query,
+                categories: ["All"] + catalog.categories
+            )
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 16)], spacing: 16) {
-                ForEach(items) { item in
-                    TronhubCard(entry: item) {
-                        model.installTronhub(item)
+                ForEach(visibleItems) { item in
+                    ExtensionCatalogCard(item: item) {
+                        handleCatalogAction(item)
                     }
                 }
             }
         }
         .onAppear { model.loadWorkspaceManagementData() }
+    }
+
+    private func handleCatalogAction(_ item: ExtensionCatalogItem) {
+        if item.source == .tronHub,
+           let entry = model.tronhubClis.first(where: { $0.name == item.name }) {
+            model.installTronhub(entry)
+        } else {
+            model.status = model.tr("Hermes CLI install will run through the gateway.", "Hermes CLI 安装将通过网关执行。")
+        }
     }
 }
 
@@ -436,25 +460,46 @@ private struct CLIManagementView: View {
 
 private struct SkillMarketView: View {
     @EnvironmentObject private var model: AppModel
+    @State private var source: ExtensionCatalogSource = .hermesHub
+    @State private var category = "All"
+    @State private var query = ""
+
+    private var catalog: ExtensionCatalogState {
+        ExtensionCatalogState(items: model.skillMarketCatalogItems)
+    }
+
+    private var visibleItems: [ExtensionCatalogItem] {
+        catalog.filtered(source: source, category: category, query: query)
+    }
 
     var body: some View {
-        ManagementPage(title: model.tr("Skill Market", "Skill 市场"), subtitle: model.tr("Install agent skills from TronHub into the workspace .skills folder.", "从 TronHub 安装 agent skills 到工作区 .skills 文件夹。")) {
+        ManagementPage(title: model.tr("Skill Market", "Skill 市场"), subtitle: model.tr("Browse Hermes Official / Hub skills and TronHub workspace extensions.", "浏览 Hermes Official / Hub skills 与 TronHub 工作区扩展。")) {
             HStack {
-                ManagementPill(model.tr("Remote", "远程仓库"), value: "ScripTron_Extension")
-                ManagementPill(model.tr("Available", "可用"), value: "\(model.tronhubSkills.count)")
+                ManagementPill(model.tr("Source", "来源"), value: source.rawValue)
+                ManagementPill(model.tr("Available", "可用"), value: "\(visibleItems.count)")
                 Spacer()
                 Button { model.syncTronhub() } label: { Label(model.tr("Sync TronHub", "同步 TronHub"), systemImage: "arrow.triangle.2.circlepath") }
                     .buttonStyle(ManagementButtonStyle(primary: true))
             }
+            ExtensionCatalogControls(
+                source: $source,
+                category: $category,
+                query: $query,
+                categories: ["All"] + catalog.categories
+            )
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 16)], spacing: 16) {
-                ForEach(model.tronhubSkills) { item in
-                    TronhubCard(entry: item) {
-                        model.installTronhub(item)
+                ForEach(visibleItems) { item in
+                    ExtensionCatalogCard(item: item) {
+                        handleCatalogAction(item)
                     }
                 }
             }
         }
         .onAppear { model.loadWorkspaceManagementData() }
+    }
+
+    private func handleCatalogAction(_ item: ExtensionCatalogItem) {
+        model.installCatalogItem(item)
     }
 }
 
@@ -485,7 +530,109 @@ private struct SkillManagementView: View {
     }
 }
 
-private struct ModelManagementView: View {
+private struct ExtensionCatalogControls: View {
+    @Binding var source: ExtensionCatalogSource
+    @Binding var category: String
+    @Binding var query: String
+    let categories: [String]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                TextField("Search extensions", text: $query)
+                    .textFieldStyle(.plain)
+                    .padding(.horizontal, 12)
+                    .frame(height: 36)
+                    .background(.white.opacity(0.86), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.hairline.opacity(0.7), lineWidth: 1))
+                Picker("", selection: $source) {
+                    ForEach(ExtensionCatalogSource.allCases) { source in
+                        Text(source.rawValue).tag(source)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 330)
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(categories, id: \.self) { item in
+                        Button(item) { category = item }
+                            .buttonStyle(ManagementButtonStyle(primary: category == item))
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct ExtensionCatalogCard: View {
+    @EnvironmentObject private var model: AppModel
+    let item: ExtensionCatalogItem
+    let action: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 10) {
+                Image(systemName: item.kind == .skill ? "sparkles" : "terminal")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Color.primaryGreen)
+                    .frame(width: 42, height: 42)
+                    .background(Color.primaryGreen.opacity(0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.name)
+                        .font(.system(size: 16, weight: .bold))
+                        .foregroundStyle(Color.appText)
+                    Text(item.description)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.appSecondaryText)
+                        .lineLimit(2)
+                }
+                Spacer()
+            }
+            HStack(spacing: 6) {
+                CatalogBadge(item.source.rawValue)
+                CatalogBadge(item.category)
+                CatalogBadge(item.trustLevel)
+                if item.wrapsExternalCLI {
+                    CatalogBadge("CLI")
+                }
+            }
+            Button(actionTitle) { action() }
+                .buttonStyle(ManagementButtonStyle(primary: true))
+        }
+        .padding(16)
+        .background(.white.opacity(0.82), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.hairline.opacity(0.7), lineWidth: 1))
+    }
+
+    private var actionTitle: String {
+        switch item.primaryAction {
+        case .installIntoHermes: return model.tr("Install into Hermes", "安装到 Hermes")
+        case .installIntoScripTron: return model.tr("Install into ScripTron", "安装到 ScripTron")
+        case .remove: return model.tr("Remove", "移除")
+        case .update: return model.tr("Update", "更新")
+        }
+    }
+}
+
+private struct CatalogBadge: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(Color.primaryGreen)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(Color.primaryGreen.opacity(0.08), in: Capsule())
+    }
+}
+
+struct ModelManagementView: View {
     @EnvironmentObject private var model: AppModel
 
     private var gatewayStatus: ProviderStatus? {

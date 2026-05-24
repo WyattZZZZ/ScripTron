@@ -17,6 +17,119 @@ struct RpcEnvelope<T: Decodable>: Decodable {
 
 struct EmptyResult: Decodable {}
 
+struct HermesSkillCatalogEntry: Decodable {
+    let name: String
+    let description: String
+    let source: String?
+    let category: String?
+    let trust_level: String?
+    let installed: Bool
+    let install_ref: String?
+    let wraps_external_cli: Bool?
+
+    var catalogItem: ExtensionCatalogItem {
+        ExtensionCatalogItem(
+            name: name,
+            kind: .skill,
+            source: .hermesHub,
+            category: category ?? "Uncategorized",
+            trustLevel: trust_level ?? "community",
+            description: description,
+            installed: installed,
+            wrapsExternalCLI: wraps_external_cli ?? false,
+            hermesCompatible: true,
+            installRef: install_ref ?? name
+        )
+    }
+}
+
+protocol ScripTronBridgeClient: Sendable {
+    func initialize() throws
+    func call<T: Decodable>(_ method: String, params: [String: Any], as type: T.Type) throws -> T
+    func callVoid(_ method: String, params: [String: Any]) throws
+}
+
+extension ScripTronBridgeClient {
+    func call<T: Decodable>(_ method: String, as type: T.Type = T.self) throws -> T {
+        try call(method, params: [:], as: type)
+    }
+
+    func callVoid(_ method: String) throws {
+        try callVoid(method, params: [:])
+    }
+}
+
+final class DummyHermesBridge: ScripTronBridgeClient, @unchecked Sendable {
+    private let workspacePath = "/tmp/ScripTronDummy"
+    private var submitted = false
+
+    func initialize() throws {
+        let demoURL = URL(fileURLWithPath: workspacePath).appendingPathComponent("Demo")
+        try FileManager.default.createDirectory(at: demoURL, withIntermediateDirectories: true)
+        let notesURL = demoURL.appendingPathComponent("notes.md")
+        if !FileManager.default.fileExists(atPath: notesURL.path) {
+            try "Initial dummy notes".write(to: notesURL, atomically: true, encoding: .utf8)
+        }
+    }
+
+    func call<T: Decodable>(_ method: String, params: [String: Any], as type: T.Type) throws -> T {
+        let json: String
+        switch method {
+        case "get_workspace_path":
+            json = #""/tmp/ScripTronDummy""#
+        case "list_workspace_files":
+            json = #"[{"name":"Demo","path":"/tmp/ScripTronDummy/Demo","is_dir":true,"is_tron":false}]"#
+        case "list_dir_files":
+            json = #"[{"name":"main.tron","path":"/tmp/ScripTronDummy/Demo/main.tron","is_dir":false,"is_tron":true},{"name":"notes.md","path":"/tmp/ScripTronDummy/Demo/notes.md","is_dir":false,"is_tron":false}]"#
+        case "list_tools":
+            json = #"[{"name":"ripgrep","kind":"tool","description":"Search workspace files","version":"1.0","command":"/usr/bin/rg","args_schema":[],"examples":[],"homepage":null,"author":null}]"#
+        case "list_skills":
+            json = #"[{"name":"writer","description":"Drafts polished text","path":"/tmp/ScripTronDummy/.skills/writer"}]"#
+        case "hermes_skills_browse":
+            json = #"[{"name":"github-pr-review","description":"Review pull requests","source":"Hermes Official / Hub","category":"Software Dev","trust_level":"official","installed":false,"install_ref":"github-pr-review","wraps_external_cli":false},{"name":"research-brief","description":"Collect sources","source":"Hermes Official / Hub","category":"Research","trust_level":"trusted","installed":false,"install_ref":"research-brief","wraps_external_cli":false}]"#
+        case "list_tronhub":
+            let kind = params["kind"] as? String ?? "skill"
+            if kind == "skill" {
+                json = #"[{"name":"writer","kind":"skill","description":"Drafts polished text","source_path":"/remote/writer","installed":false,"manifest_json":null}]"#
+            } else if kind == "cli" {
+                json = #"[{"name":"ripgrep","kind":"cli","description":"Search workspace files","source_path":"/remote/rg","installed":true,"manifest_json":null}]"#
+            } else {
+                json = "[]"
+            }
+        case "get_active_config":
+            json = #"{"provider":"hermes","model":"Hermes Dummy"}"#
+        case "get_auth_status":
+            json = #"[{"provider":"hermes","display_name":"Hermes Gateway","connected":true,"auth_method":"stdio dummy","available_models":["Hermes Dummy"],"default_model":"Hermes Dummy"}]"#
+        case "open_tron_file", "create_tron_file":
+            json = #"""
+            {
+              "path": "/tmp/ScripTronDummy/Demo/main.tron",
+              "cells": [
+                {"run": false, "content": "# Dummy Context\nHermes gateway dummy mode."},
+                {"run": true, "content": "[[scriptron:run-name]] build\nCreate a launch plan from the dummy context."}
+              ],
+              "blackboard": {"notes":[]}
+            }
+            """#
+        case "hermes_poll_events":
+            json = submitted
+                ? #"[{"type":"message_delta","content":"Hermes dummy response from the UI bridge."},{"type":"tool_start","tool":"write_file"},{"type":"delegation_status","content":"Dummy helper running"},{"type":"approval_request","content":"Allow dummy file write?"},{"type":"complete"}]"#
+                : "[]"
+        case "troner_agent_message":
+            json = "\"# Generated Dummy Markdown\\n- First task\\n- Second task\""
+        default:
+            json = "null"
+        }
+        return try JSONDecoder().decode(T.self, from: Data(json.utf8))
+    }
+
+    func callVoid(_ method: String, params: [String: Any]) throws {
+        if method == "hermes_prompt_submit" {
+            submitted = true
+        }
+    }
+}
+
 struct FileEntry: Identifiable, Decodable {
     var id: String { path }
     let name: String
@@ -288,7 +401,7 @@ struct AnyCodable: Codable {
     }
 }
 
-final class RustBridge: @unchecked Sendable {
+final class RustBridge: ScripTronBridgeClient, @unchecked Sendable {
     static let shared = RustBridge()
 
     private let lock = NSLock()

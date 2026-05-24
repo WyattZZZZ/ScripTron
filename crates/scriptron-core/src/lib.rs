@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
     path::{Path, PathBuf},
+    process::Stdio,
     sync::Arc,
 };
 use tokio::sync::RwLock;
@@ -316,6 +317,36 @@ pub struct SkillIndexEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HermesStatus {
+    pub installed: bool,
+    pub running: bool,
+    pub version: Option<String>,
+    pub diagnostic: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HermesSkillCatalogItem {
+    pub name: String,
+    pub description: String,
+    #[serde(default = "default_hermes_source")]
+    pub source: String,
+    #[serde(default)]
+    pub category: String,
+    #[serde(default)]
+    pub trust_level: String,
+    #[serde(default)]
+    pub installed: bool,
+    #[serde(default)]
+    pub install_ref: Option<String>,
+    #[serde(default)]
+    pub wraps_external_cli: bool,
+}
+
+fn default_hermes_source() -> String {
+    "Hermes Official / Hub".into()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HermesPromptSubmitResult {
     pub events: Vec<ExecutionEvent>,
     pub blackboard: serde_json::Value,
@@ -492,6 +523,68 @@ impl ScriptronCore {
             .await
             .map_err(|e| e.to_string())?;
         Ok(())
+    }
+
+    pub async fn hermes_status(&self) -> Result<HermesStatus, String> {
+        let bin = hermes_binary();
+        let output = tokio::process::Command::new(&bin)
+            .arg("--version")
+            .stdin(Stdio::null())
+            .output()
+            .await;
+
+        match output {
+            Ok(output) if output.status.success() => {
+                let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                Ok(HermesStatus {
+                    installed: true,
+                    running: false,
+                    version: if version.is_empty() {
+                        None
+                    } else {
+                        Some(version)
+                    },
+                    diagnostic: None,
+                })
+            }
+            Ok(output) => Ok(HermesStatus {
+                installed: false,
+                running: false,
+                version: None,
+                diagnostic: Some(String::from_utf8_lossy(&output.stderr).trim().to_string()),
+            }),
+            Err(error) => Ok(HermesStatus {
+                installed: false,
+                running: false,
+                version: None,
+                diagnostic: Some(error.to_string()),
+            }),
+        }
+    }
+
+    pub async fn hermes_skills_browse(&self) -> Result<Vec<HermesSkillCatalogItem>, String> {
+        run_hermes_skill_catalog_command(&["skills", "browse", "--json"]).await
+    }
+
+    pub async fn hermes_skills_search(
+        &self,
+        query: String,
+    ) -> Result<Vec<HermesSkillCatalogItem>, String> {
+        run_hermes_skill_catalog_command(&["skills", "search", &query, "--json"]).await
+    }
+
+    pub async fn hermes_skills_install(&self, install_ref: String) -> Result<(), String> {
+        let output = tokio::process::Command::new(hermes_binary())
+            .args(["skills", "install", &install_ref])
+            .stdin(Stdio::null())
+            .output()
+            .await
+            .map_err(|e| e.to_string())?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
+        }
     }
 
     pub async fn get_auth_status(&self) -> Vec<ProviderStatus> {
@@ -854,6 +947,34 @@ impl ScriptronCore {
             .await
             .map_err(|e| e.to_string())
     }
+}
+
+fn hermes_binary() -> String {
+    std::env::var("SCRIPTRON_HERMES_BIN").unwrap_or_else(|_| "hermes".into())
+}
+
+async fn run_hermes_skill_catalog_command(
+    args: &[&str],
+) -> Result<Vec<HermesSkillCatalogItem>, String> {
+    let output = tokio::process::Command::new(hermes_binary())
+        .args(args)
+        .stdin(Stdio::null())
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    let mut items: Vec<HermesSkillCatalogItem> =
+        serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+    for item in &mut items {
+        item.source = default_hermes_source();
+        if item.install_ref.is_none() {
+            item.install_ref = Some(item.name.clone());
+        }
+    }
+    items.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(items)
 }
 
 const RUN_NAME_PREFIX: &str = "[[scriptron:run-name]]";

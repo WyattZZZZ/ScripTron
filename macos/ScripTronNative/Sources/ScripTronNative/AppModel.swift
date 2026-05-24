@@ -149,6 +149,7 @@ final class AppModel: ObservableObject {
     @Published var tronhubClis: [TronhubEntry] = []
     @Published var tronhubModels: [TronhubEntry] = []
     @Published var tronhubSkills: [TronhubEntry] = []
+    @Published var hermesSkillCatalog: [ExtensionCatalogItem] = []
     @Published var activeConfig: ActiveConfig?
     @Published var providerStatuses: [ProviderStatus] = []
     @Published var pluginLoginRunning: String? = nil
@@ -166,9 +167,20 @@ final class AppModel: ObservableObject {
     @Published var errorMessage: String?
     @Published var focusedBlockID: UUID?
 
-    private let bridge = RustBridge.shared
+    private let bridge: ScripTronBridgeClient
     private var externalTabStates: [String: ExternalTabState] = [:]
     private var tronTabStates: [String: TronTabState] = [:]
+
+    init(bridge: ScripTronBridgeClient = AppModel.defaultBridge()) {
+        self.bridge = bridge
+    }
+
+    private static func defaultBridge() -> ScripTronBridgeClient {
+        if ProcessInfo.processInfo.environment["SCRIPTRON_DUMMY_BRIDGE"] == "1" {
+            return DummyHermesBridge()
+        }
+        return RustBridge.shared
+    }
 
     private var projectRootPath: String {
         activeProjectPath ?? workspacePath
@@ -289,6 +301,7 @@ final class AppModel: ObservableObject {
         refreshRegistry()
         loadActiveConfig()
         loadProviderStatuses()
+        refreshHermesSkillCatalog()
         refreshSkills()
         refreshTronhub()
     }
@@ -385,6 +398,38 @@ final class AppModel: ObservableObject {
             installedSkills = try bridge.call("list_skills", as: [SkillEntry].self)
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    var skillMarketCatalogItems: [ExtensionCatalogItem] {
+        hermesSkillCatalog + tronhubSkills.map(ExtensionCatalogFixtures.fromTronhub)
+    }
+
+    func refreshHermesSkillCatalog() {
+        do {
+            let entries = try bridge.call("hermes_skills_browse", as: [HermesSkillCatalogEntry].self)
+            hermesSkillCatalog = entries.map(\.catalogItem)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func installCatalogItem(_ item: ExtensionCatalogItem) {
+        if item.source == .hermesHub || item.hermesCompatible {
+            do {
+                try bridge.callVoid("hermes_skills_install", params: ["install_ref": item.installRef ?? item.name])
+                refreshHermesSkillCatalog()
+                refreshSkills()
+                status = "Installed \(item.name) through Hermes"
+            } catch {
+                errorMessage = error.localizedDescription
+                status = "Install failed"
+            }
+            return
+        }
+
+        if let entry = (tronhubSkills + tronhubClis).first(where: { $0.name == item.name }) {
+            installTronhub(entry)
         }
     }
 

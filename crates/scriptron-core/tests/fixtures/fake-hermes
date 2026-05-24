@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ -n "${FAKE_HERMES_LOG:-}" ]]; then
+  printf '%s\n' "$*" >> "$FAKE_HERMES_LOG"
+fi
+
+if [[ "${1:-}" == "--version" ]]; then
+  printf 'hermes 0.0.0-fake\n'
+  exit 0
+fi
+
+if [[ "${1:-}" == "skills" && "${2:-}" == "browse" ]]; then
+  cat <<'JSON'
+[
+  {
+    "name": "github-pr-review",
+    "description": "Review pull requests and summarize actionable changes.",
+    "category": "Software Dev",
+    "trust_level": "official",
+    "installed": false,
+    "install_ref": "github-pr-review",
+    "wraps_external_cli": false
+  },
+  {
+    "name": "research-brief",
+    "description": "Collect sources and draft concise research briefs.",
+    "category": "Research",
+    "trust_level": "trusted",
+    "installed": true,
+    "install_ref": "research-brief",
+    "wraps_external_cli": false
+  }
+]
+JSON
+  exit 0
+fi
+
+if [[ "${1:-}" == "skills" && "${2:-}" == "search" ]]; then
+  query="${3:-}"
+  if [[ "$query" == "github" ]]; then
+    cat <<'JSON'
+[
+  {
+    "name": "github-pr-review",
+    "description": "Review pull requests and summarize actionable changes.",
+    "category": "Software Dev",
+    "trust_level": "official",
+    "installed": false,
+    "install_ref": "github-pr-review",
+    "wraps_external_cli": false
+  }
+]
+JSON
+  else
+    printf '[]\n'
+  fi
+  exit 0
+fi
+
+if [[ "${1:-}" == "skills" && "${2:-}" == "install" ]]; then
+  printf '{"installed":true}\n'
+  exit 0
+fi
+
+printf 'unexpected fake hermes args: %s\n' "$*" >&2
+exit 64

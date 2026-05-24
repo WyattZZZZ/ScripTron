@@ -179,6 +179,210 @@ struct HermesRunCommandCatalog {
     ])
 }
 
+struct RunCellActionMenuModel {
+    let items: [HermesRunCommandItem]
+
+    var primary: HermesRunCommandItem {
+        items.first { $0.method == "prompt.submit" } ?? items[0]
+    }
+
+    static let `default` = RunCellActionMenuModel(items: HermesRunCommandCatalog.default.commands)
+}
+
+enum ExtensionCatalogSource: String, CaseIterable, Equatable, Identifiable {
+    case hermesHub = "Hermes Official / Hub"
+    case tronHub = "TronHub"
+
+    var id: String { rawValue }
+}
+
+enum ExtensionCatalogKind: String, Equatable {
+    case cli
+    case skill
+}
+
+enum ExtensionCatalogAction: Equatable {
+    case installIntoHermes
+    case installIntoScripTron
+    case remove
+    case update
+}
+
+struct ExtensionCatalogItem: Identifiable, Equatable {
+    var id: String { "\(source.rawValue):\(kind.rawValue):\(name)" }
+    let name: String
+    let kind: ExtensionCatalogKind
+    let source: ExtensionCatalogSource
+    let category: String
+    let trustLevel: String
+    let description: String
+    let installed: Bool
+    let wrapsExternalCLI: Bool
+    let hermesCompatible: Bool
+    let installRef: String?
+
+    init(
+        name: String,
+        kind: ExtensionCatalogKind,
+        source: ExtensionCatalogSource,
+        category: String,
+        trustLevel: String,
+        description: String,
+        installed: Bool,
+        wrapsExternalCLI: Bool,
+        hermesCompatible: Bool,
+        installRef: String? = nil
+    ) {
+        self.name = name
+        self.kind = kind
+        self.source = source
+        self.category = category
+        self.trustLevel = trustLevel
+        self.description = description
+        self.installed = installed
+        self.wrapsExternalCLI = wrapsExternalCLI
+        self.hermesCompatible = hermesCompatible
+        self.installRef = installRef
+    }
+
+    var primaryAction: ExtensionCatalogAction {
+        if installed { return .remove }
+        if hermesCompatible { return .installIntoHermes }
+        return .installIntoScripTron
+    }
+}
+
+struct ExtensionCatalogState {
+    let items: [ExtensionCatalogItem]
+
+    var sources: [ExtensionCatalogSource] {
+        ExtensionCatalogSource.allCases.filter { source in
+            items.contains { $0.source == source }
+        }
+    }
+
+    var categories: [String] {
+        Array(Set(items.map(\.category))).sorted()
+    }
+
+    func filtered(source: ExtensionCatalogSource, category: String, query: String) -> [ExtensionCatalogItem] {
+        let normalizedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return items
+            .filter { $0.source == source }
+            .filter { category == "All" || $0.category == category }
+            .filter { item in
+                normalizedQuery.isEmpty
+                    || item.name.lowercased().contains(normalizedQuery)
+                    || item.description.lowercased().contains(normalizedQuery)
+                    || item.category.lowercased().contains(normalizedQuery)
+            }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+}
+
+enum ExtensionCatalogFixtures {
+    static let hermesSkillItems = [
+        ExtensionCatalogItem(
+            name: "github-pr-review",
+            kind: .skill,
+            source: .hermesHub,
+            category: "Software Dev",
+            trustLevel: "official",
+            description: "Review pull requests and summarize actionable changes.",
+            installed: false,
+            wrapsExternalCLI: false,
+            hermesCompatible: true,
+            installRef: "github-pr-review"
+        ),
+        ExtensionCatalogItem(
+            name: "research-brief",
+            kind: .skill,
+            source: .hermesHub,
+            category: "Research",
+            trustLevel: "trusted",
+            description: "Collect sources and draft concise research briefs.",
+            installed: false,
+            wrapsExternalCLI: false,
+            hermesCompatible: true,
+            installRef: "research-brief"
+        )
+    ]
+
+    static let hermesCLIItems = [
+        ExtensionCatalogItem(
+            name: "shell-command-runner",
+            kind: .cli,
+            source: .hermesHub,
+            category: "DevOps",
+            trustLevel: "official",
+            description: "Hermes-managed wrapper for local shell tools and command approval.",
+            installed: false,
+            wrapsExternalCLI: true,
+            hermesCompatible: true,
+            installRef: "shell-command-runner"
+        ),
+        ExtensionCatalogItem(
+            name: "code-search",
+            kind: .cli,
+            source: .hermesHub,
+            category: "Software Dev",
+            trustLevel: "trusted",
+            description: "Hermes skill wrapper for source search workflows.",
+            installed: false,
+            wrapsExternalCLI: true,
+            hermesCompatible: true,
+            installRef: "code-search"
+        )
+    ]
+
+    static func fromTronhub(_ entry: TronhubEntry) -> ExtensionCatalogItem {
+        ExtensionCatalogItem(
+            name: entry.name,
+            kind: entry.kind == "skill" ? .skill : .cli,
+            source: .tronHub,
+            category: entry.kind == "skill" ? "AI Agents" : "Productivity",
+            trustLevel: "workspace",
+            description: entry.description,
+            installed: entry.installed,
+            wrapsExternalCLI: entry.kind != "skill",
+            hermesCompatible: entry.kind == "skill",
+            installRef: entry.source_path
+        )
+    }
+}
+
+struct RunEventSectionGroups {
+    let response: [RunEvent]
+    let log: [RunEvent]
+    let delegations: [RunEvent]
+    let approvals: [RunEvent]
+}
+
+enum RunEventPresentation {
+    static func sections(for events: [RunEvent]) -> RunEventSectionGroups {
+        RunEventSectionGroups(
+            response: events.filter { $0.type == "text" || $0.type == "message_delta" || $0.type == "message_complete" },
+            log: events.filter { $0.type.hasPrefix("tool_") || legacyLogTypes.contains($0.type) },
+            delegations: events.filter { $0.type == "delegation_status" },
+            approvals: events.filter { $0.type == "approval_request" || $0.type == "clarify_request" || $0.type == "secret_request" }
+        )
+    }
+
+    private static let legacyLogTypes: Set<String> = [
+        "warning",
+        "plan",
+        "skill_selected",
+        "tool_call",
+        "tool_result",
+        "step_started",
+        "step_retried",
+        "step_completed",
+        "step_failed",
+        "thinking",
+        "error"
+    ]
+}
+
 struct HermesApprovalAction: Equatable {
     let response: HermesApprovalMode
     let title: String
@@ -359,6 +563,12 @@ struct HermesBridgeMethodCatalog {
         "hermes_clarify_respond",
         "hermes_secret_respond",
         "hermes_command_catalog",
-        "hermes_command_dispatch"
+        "hermes_command_dispatch",
+        "hermes_skills_browse",
+        "hermes_skills_search",
+        "hermes_skills_install",
+        "hermes_skills_remove",
+        "hermes_skills_update",
+        "hermes_skill_sources"
     ])
 }

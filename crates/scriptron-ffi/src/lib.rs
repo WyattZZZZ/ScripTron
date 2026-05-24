@@ -134,6 +134,21 @@ async fn dispatch(request: RpcRequest) -> Result<Value, String> {
         "get_auth_status" => {
             serde_json::to_value(core.get_auth_status().await).map_err(|e| e.to_string())
         }
+        "hermes_status" => {
+            serde_json::to_value(core.hermes_status().await?).map_err(|e| e.to_string())
+        }
+        "hermes_skills_browse" => {
+            serde_json::to_value(core.hermes_skills_browse().await?).map_err(|e| e.to_string())
+        }
+        "hermes_skills_search" => {
+            let query = required_string(&request.params, "query")?;
+            serde_json::to_value(core.hermes_skills_search(query).await?).map_err(|e| e.to_string())
+        }
+        "hermes_skills_install" => {
+            let install_ref = required_string(&request.params, "install_ref")?;
+            core.hermes_skills_install(install_ref).await?;
+            Ok(json!(null))
+        }
         "get_active_config" => {
             serde_json::to_value(core.get_active_config().await).map_err(|e| e.to_string())
         }
@@ -292,4 +307,73 @@ fn json_response(result: Result<Value, String>) -> *mut c_char {
     CString::new(value.to_string())
         .unwrap_or_else(|_| CString::new("{\"ok\":false,\"error\":\"Invalid response\"}").unwrap())
         .into_raw()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    fn fixture_path(name: &str) -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("scriptron-core")
+            .join("tests")
+            .join("fixtures")
+            .join(name)
+    }
+
+    fn unique_temp_home(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before unix epoch")
+            .as_nanos();
+        std::env::temp_dir().join(format!(
+            "scriptron-ffi-{label}-{}-{nanos}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn dispatch_exposes_stage2_hermes_skill_methods() {
+        let home = unique_temp_home("stage2-hermes-skills");
+        fs::create_dir_all(&home).expect("create temp home");
+        let command_log = home.join("fake-hermes-commands.log");
+        std::env::set_var("HOME", &home);
+        std::env::set_var("SCRIPTRON_HERMES_BIN", fixture_path("fake-hermes"));
+        std::env::set_var("FAKE_HERMES_LOG", &command_log);
+
+        let rt = Runtime::new().expect("runtime");
+        let browsed = rt
+            .block_on(dispatch(RpcRequest {
+                method: "hermes_skills_browse".into(),
+                params: json!({}),
+            }))
+            .expect("browse dispatch");
+        assert_eq!(browsed[0]["name"], "github-pr-review");
+        assert_eq!(browsed[0]["source"], "Hermes Official / Hub");
+
+        let searched = rt
+            .block_on(dispatch(RpcRequest {
+                method: "hermes_skills_search".into(),
+                params: json!({ "query": "github" }),
+            }))
+            .expect("search dispatch");
+        assert_eq!(searched.as_array().expect("array").len(), 1);
+
+        rt.block_on(dispatch(RpcRequest {
+            method: "hermes_skills_install".into(),
+            params: json!({ "install_ref": "github-pr-review" }),
+        }))
+        .expect("install dispatch");
+
+        let log = fs::read_to_string(command_log).expect("read fake hermes command log");
+        assert!(log.contains("skills browse --json"));
+        assert!(log.contains("skills search github --json"));
+        assert!(log.contains("skills install github-pr-review"));
+    }
 }
