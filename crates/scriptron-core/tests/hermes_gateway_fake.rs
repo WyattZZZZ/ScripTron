@@ -77,7 +77,7 @@ async fn fake_hermes_skills_flow_uses_official_hub_and_does_not_write_workspace_
 
     let log = fs::read_to_string(command_log).expect("read fake hermes command log");
     assert!(log.contains("--version"));
-    assert!(log.contains("skills browse --json"));
-    assert!(log.contains("skills search github --json"));
+    assert!(log.contains("skills browse --size 100"));
+    assert!(log.contains("skills search github --limit 20"));
     assert!(log.contains("skills install github-pr-review"));
 }

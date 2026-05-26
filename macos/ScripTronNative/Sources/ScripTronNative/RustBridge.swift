@@ -79,8 +79,24 @@ final class DummyHermesBridge: ScripTronBridgeClient, @unchecked Sendable {
             json = #""/tmp/ScripTronDummy""#
         case "list_workspace_files":
             json = #"[{"name":"Demo","path":"/tmp/ScripTronDummy/Demo","is_dir":true,"is_tron":false}]"#
+        case "list_projects":
+            json = #"[{"name":"Demo","path":"/tmp/ScripTronDummy/Demo","status":"Ready","archived":false,"packaged":false}]"#
         case "list_dir_files":
             json = #"[{"name":"main.tron","path":"/tmp/ScripTronDummy/Demo/main.tron","is_dir":false,"is_tron":true},{"name":"notes.md","path":"/tmp/ScripTronDummy/Demo/notes.md","is_dir":false,"is_tron":false}]"#
+        case "create_folder":
+            let parent = params["parent_path"] as? String ?? "/tmp/ScripTronDummy/Demo"
+            let name = params["name"] as? String ?? "New Folder"
+            json = #"{"name":"\#(name)","path":"\#(parent)/\#(name)","is_dir":true,"is_tron":false}"#
+        case "create_file":
+            let parent = params["parent_path"] as? String ?? "/tmp/ScripTronDummy/Demo"
+            let name = params["name"] as? String ?? "untitled.md"
+            let isTron = name.hasSuffix(".tron")
+            json = #"{"name":"\#(name)","path":"\#(parent)/\#(name)","is_dir":false,"is_tron":\#(isTron)}"#
+        case "rename_entry":
+            let path = params["path"] as? String ?? "/tmp/ScripTronDummy/Demo/item"
+            let name = params["name"] as? String ?? "renamed"
+            let parent = URL(fileURLWithPath: path).deletingLastPathComponent().path
+            json = #"{"name":"\#(name)","path":"\#(parent)/\#(name)","is_dir":false,"is_tron":false}"#
         case "list_tools":
             json = #"[{"name":"ripgrep","kind":"tool","description":"Search workspace files","version":"1.0","command":"/usr/bin/rg","args_schema":[],"examples":[],"homepage":null,"author":null}]"#
         case "list_skills":

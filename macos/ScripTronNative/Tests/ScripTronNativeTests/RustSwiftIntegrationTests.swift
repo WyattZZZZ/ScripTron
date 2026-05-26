@@ -48,8 +48,8 @@ final class RustSwiftIntegrationTests: XCTestCase {
 
         let commands = try String(contentsOf: log, encoding: .utf8)
         XCTAssertTrue(commands.contains("--version"))
-        XCTAssertTrue(commands.contains("skills browse --json"))
-        XCTAssertTrue(commands.contains("skills search github --json"))
+        XCTAssertTrue(commands.contains("skills browse --size 100"))
+        XCTAssertTrue(commands.contains("skills search github --limit 20"))
         XCTAssertTrue(commands.contains("skills install github-pr-review"))
     }
 }

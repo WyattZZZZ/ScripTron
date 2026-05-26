@@ -50,13 +50,21 @@ final class AppModel: ObservableObject {
         var id: String { rawValue }
     }
 
-    struct ProjectItem: Identifiable, Equatable {
+    struct ProjectItem: Identifiable, Equatable, Decodable {
         let id = UUID()
         var name: String
         var path: String
         var status: String
         var archived: Bool = false
         var packaged: Bool = false
+
+        enum CodingKeys: String, CodingKey {
+            case name
+            case path
+            case status
+            case archived
+            case packaged
+        }
     }
 
     struct ChatMessage: Identifiable {
@@ -535,12 +543,8 @@ final class AppModel: ObservableObject {
             errorMessage = "Project name cannot be empty."
             return
         }
-        let directoryName = sanitizedPathComponent(trimmed.replacingOccurrences(of: " ", with: "-").lowercased())
-        let targetDirectory = URL(fileURLWithPath: workspacePath, isDirectory: true)
-        let projectURL = uniqueDestinationURL(for: directoryName, in: targetDirectory)
-
         do {
-            try FileManager.default.createDirectory(at: projectURL, withIntermediateDirectories: true)
+            try bridge.callVoid("create_project", params: ["name": trimmed])
             refreshFiles()
             workspacePanel = .allProjects
             status = "Created project \(trimmed)"
@@ -575,14 +579,18 @@ final class AppModel: ObservableObject {
     }
 
     private func startZipProjectImport(from sourceURL: URL) {
-        let workspacePath = workspacePath
+        let bridge = self.bridge
         Task.detached(priority: .userInitiated) {
             do {
-                let result = try Self.importZipProject(from: sourceURL, intoWorkspaceAt: workspacePath)
+                let result: ProjectItem = try bridge.call(
+                    "import_zip_project",
+                    params: ["path": sourceURL.path],
+                    as: ProjectItem.self
+                )
                 await MainActor.run {
                     self.workspacePanel = .allProjects
                     self.refreshFiles()
-                    self.status = "Imported \(result.projectName)"
+                    self.status = "Imported \(result.name)"
                 }
             } catch {
                 await MainActor.run {
@@ -594,16 +602,24 @@ final class AppModel: ObservableObject {
     }
 
     func archiveProject(_ project: ProjectItem) {
-        updateProject(project) { item in
-            item.archived = true
-            item.status = "Archived"
+        do {
+            try bridge.callVoid("archive_project", params: ["path": project.path])
+            refreshFiles()
+            status = "\(project.name): Archived"
+        } catch {
+            errorMessage = error.localizedDescription
+            status = "Archive project failed"
         }
     }
 
     func restoreProject(_ project: ProjectItem) {
-        updateProject(project) { item in
-            item.archived = false
-            item.status = "Ready"
+        do {
+            try bridge.callVoid("restore_project", params: ["path": project.path])
+            refreshFiles()
+            status = "\(project.name): Ready"
+        } catch {
+            errorMessage = error.localizedDescription
+            status = "Restore project failed"
         }
     }
 
@@ -616,8 +632,7 @@ final class AppModel: ObservableObject {
 
     func deleteProject(_ project: ProjectItem) {
         do {
-            try FileManager.default.removeItem(at: URL(fileURLWithPath: project.path))
-            projects.removeAll { $0.path == project.path }
+            try bridge.callVoid("delete_project", params: ["path": project.path])
             refreshFiles()
             status = "Deleted \(project.name)"
         } catch {
@@ -1010,13 +1025,14 @@ final class AppModel: ObservableObject {
             return
         }
 
-        let targetDirectory = URL(fileURLWithPath: projectRootPath, isDirectory: true)
-        let destinationURL = uniqueDestinationURL(for: trimmed, in: targetDirectory)
-
         do {
-            try FileManager.default.createDirectory(at: destinationURL, withIntermediateDirectories: true)
+            let created = try bridge.call(
+                "create_folder",
+                params: ["parent_path": projectRootPath, "name": trimmed],
+                as: FileEntry.self
+            )
             refreshFiles()
-            status = "Created folder \(destinationURL.lastPathComponent)"
+            status = "Created folder \(created.name)"
         } catch {
             errorMessage = error.localizedDescription
             status = "Create folder failed"
@@ -1030,11 +1046,12 @@ final class AppModel: ObservableObject {
             return
         }
 
-        let sourceURL = URL(fileURLWithPath: file.path)
-        let targetURL = uniqueDestinationURL(for: trimmed, in: sourceURL.deletingLastPathComponent())
-
         do {
-            try FileManager.default.moveItem(at: sourceURL, to: targetURL)
+            let renamed = try bridge.call(
+                "rename_entry",
+                params: ["path": file.path, "name": trimmed],
+                as: FileEntry.self
+            )
             if selectedFile?.path == file.path || openedFile?.path == file.path {
                 selectedFile = nil
                 openedFile = nil
@@ -1045,7 +1062,7 @@ final class AppModel: ObservableObject {
             openTabs.removeAll { $0.path == file.path }
             if activeTabPath == file.path { activeTabPath = nil }
             refreshFiles()
-            status = "Renamed to \(targetURL.lastPathComponent)"
+            status = "Renamed to \(renamed.name)"
         } catch {
             errorMessage = error.localizedDescription
             status = "Rename failed"
@@ -1054,7 +1071,7 @@ final class AppModel: ObservableObject {
 
     func deleteFile(_ file: FileEntry) {
         do {
-            try FileManager.default.removeItem(at: URL(fileURLWithPath: file.path))
+            try bridge.callVoid("delete_entry", params: ["path": file.path])
             if selectedFile?.path == file.path || openedFile?.path == file.path {
                 selectedFile = nil
                 openedFile = nil
@@ -1089,17 +1106,17 @@ final class AppModel: ObservableObject {
     }
 
     private func createPlainFile(path: String, fileName: String) {
-        let manager = FileManager.default
         let requestedURL = URL(fileURLWithPath: path)
-        let destinationURL = uniqueDestinationURL(for: requestedURL.lastPathComponent, in: requestedURL.deletingLastPathComponent())
 
         do {
-            try manager.createDirectory(at: destinationURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-            guard manager.createFile(atPath: destinationURL.path, contents: Data()) else {
-                errorMessage = "Could not create \(fileName)."
-                status = "Create failed"
-                return
-            }
+            let created = try bridge.call(
+                "create_file",
+                params: [
+                    "parent_path": requestedURL.deletingLastPathComponent().path,
+                    "name": requestedURL.lastPathComponent
+                ],
+                as: FileEntry.self
+            )
             refreshFiles()
             selectedFile = nil
             openedFile = nil
@@ -1108,7 +1125,7 @@ final class AppModel: ObservableObject {
             documentBlocks = []
             isDirty = false
             screen = .project(.explorer)
-            status = "Created \(destinationURL.lastPathComponent)"
+            status = "Created \(created.name)"
         } catch {
             errorMessage = error.localizedDescription
             status = "Create failed"
@@ -1521,7 +1538,7 @@ final class AppModel: ObservableObject {
     func saveSelectedFile() {
         if let file = openedFile {
             do {
-                try file.content.write(to: URL(fileURLWithPath: file.path), atomically: true, encoding: .utf8)
+                try bridge.callVoid("save_plain_file", params: ["path": file.path, "content": file.content])
                 openedFile = file
                 if let activeTabPath {
                     externalTabStates[activeTabPath] = ExternalTabState(file: file, dirty: false)
@@ -1710,19 +1727,12 @@ final class AppModel: ObservableObject {
     }
 
     private func rebuildProjects() {
-        let workspaceURL = URL(fileURLWithPath: workspacePath, isDirectory: true)
-        let directoryURLs = (try? FileManager.default.contentsOfDirectory(
-            at: workspaceURL,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        )) ?? []
-
-        projects = directoryURLs.compactMap { url in
-            let isDirectory = (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) ?? false
-            guard isDirectory else { return nil }
-            return ProjectItem(name: url.lastPathComponent, path: url.path, status: "Ready")
+        do {
+            projects = try bridge.call("list_projects", as: [ProjectItem].self)
+        } catch {
+            errorMessage = error.localizedDescription
+            projects = []
         }
-        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     private func openExternalFile(_ file: FileEntry) {
@@ -2206,15 +2216,19 @@ final class AppModel: ObservableObject {
     }
 
     private func copyDroppedFile(from sourceURL: URL, to targetDirectoryPath: String? = nil) {
-        let manager = FileManager.default
         let targetDirectory = URL(fileURLWithPath: targetDirectoryPath ?? projectRootPath, isDirectory: true)
 
         do {
-            try manager.createDirectory(at: targetDirectory, withIntermediateDirectories: true)
-            let destinationURL = uniqueDestinationURL(for: sourceURL.lastPathComponent, in: targetDirectory)
-            try manager.copyItem(at: sourceURL, to: destinationURL)
+            let copied: FileEntry = try bridge.call(
+                "copy_entry",
+                params: [
+                    "path": sourceURL.path,
+                    "target_directory_path": targetDirectory.path
+                ],
+                as: FileEntry.self
+            )
             refreshFiles()
-            status = "Copied \(destinationURL.lastPathComponent)"
+            status = "Copied \(copied.name)"
             endDraggingFile()
         } catch {
             errorMessage = error.localizedDescription
@@ -2224,7 +2238,6 @@ final class AppModel: ObservableObject {
     }
 
     private func moveDroppedFile(from sourceURL: URL, to targetDirectoryPath: String? = nil) {
-        let manager = FileManager.default
         let targetDirectory = URL(fileURLWithPath: targetDirectoryPath ?? projectRootPath, isDirectory: true)
         let source = sourceURL.standardizedFileURL
         let target = targetDirectory.standardizedFileURL
@@ -2244,10 +2257,14 @@ final class AppModel: ObservableObject {
         }
 
         do {
-            try manager.createDirectory(at: targetDirectory, withIntermediateDirectories: true)
-            let destinationURL = uniqueDestinationURL(for: sourceURL.lastPathComponent, in: targetDirectory)
-            guard sourceURL.standardizedFileURL != destinationURL.standardizedFileURL else { return }
-            try manager.moveItem(at: sourceURL, to: destinationURL)
+            let moved: FileEntry = try bridge.call(
+                "move_entry",
+                params: [
+                    "path": sourceURL.path,
+                    "target_directory_path": targetDirectory.path
+                ],
+                as: FileEntry.self
+            )
             if selectedFile?.path == sourceURL.path || openedFile?.path == sourceURL.path {
             selectedFile = nil
             openedFile = nil
@@ -2257,7 +2274,7 @@ final class AppModel: ObservableObject {
                 isDirty = false
             }
             refreshFiles()
-            status = "Moved \(destinationURL.lastPathComponent)"
+            status = "Moved \(moved.name)"
             endDraggingFile()
         } catch {
             errorMessage = error.localizedDescription
@@ -2269,92 +2286,6 @@ final class AppModel: ObservableObject {
     private func isDirectory(_ url: URL) -> Bool {
         var isDirectory: ObjCBool = false
         return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) && isDirectory.boolValue
-    }
-
-    private func uniqueDestinationURL(for fileName: String, in directory: URL) -> URL {
-        let manager = FileManager.default
-        let originalURL = directory.appendingPathComponent(fileName)
-        guard manager.fileExists(atPath: originalURL.path) else { return originalURL }
-
-        let baseName = originalURL.deletingPathExtension().lastPathComponent
-        let fileExtension = originalURL.pathExtension
-
-        for suffix in 2...999 {
-            let candidateName = fileExtension.isEmpty
-                ? "\(baseName) \(suffix)"
-                : "\(baseName) \(suffix).\(fileExtension)"
-            let candidateURL = directory.appendingPathComponent(candidateName)
-            if !manager.fileExists(atPath: candidateURL.path) {
-                return candidateURL
-            }
-        }
-
-        return directory.appendingPathComponent("\(UUID().uuidString)-\(fileName)")
-    }
-
-    private struct ZipImportResult: Sendable {
-        let projectName: String
-    }
-
-    nonisolated private static func importZipProject(from sourceURL: URL, intoWorkspaceAt workspacePath: String) throws -> ZipImportResult {
-        let source = sourceURL.standardizedFileURL
-        guard source.pathExtension.lowercased() == "zip" else {
-            throw zipImportError("Only .zip files can be imported as projects.")
-        }
-
-        let manager = FileManager.default
-        let workspaceURL = URL(fileURLWithPath: workspacePath, isDirectory: true)
-        try manager.createDirectory(at: workspaceURL, withIntermediateDirectories: true)
-
-        let baseName = source.deletingPathExtension().lastPathComponent
-        let directoryName = sanitizedProjectDirectoryName(baseName)
-        let projectURL = uniqueDestinationURL(for: directoryName, in: workspaceURL, fileManager: manager)
-        try manager.createDirectory(at: projectURL, withIntermediateDirectories: true)
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
-        process.arguments = ["-x", "-k", source.path, projectURL.path]
-        try process.run()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
-            try? manager.removeItem(at: projectURL)
-            throw zipImportError("Could not unzip \(source.lastPathComponent).")
-        }
-
-        return ZipImportResult(projectName: projectURL.lastPathComponent)
-    }
-
-    nonisolated private static func zipImportError(_ message: String) -> NSError {
-        NSError(domain: "ScripTron.ZipImport", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
-    }
-
-    nonisolated private static func sanitizedProjectDirectoryName(_ rawName: String) -> String {
-        let sanitized = rawName
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-            .replacingOccurrences(of: "/", with: "-")
-            .replacingOccurrences(of: ":", with: "-")
-        return sanitized.isEmpty ? "Imported Project" : sanitized
-    }
-
-    nonisolated private static func uniqueDestinationURL(for fileName: String, in directory: URL, fileManager manager: FileManager) -> URL {
-        let originalURL = directory.appendingPathComponent(fileName)
-        guard manager.fileExists(atPath: originalURL.path) else { return originalURL }
-
-        let baseName = originalURL.deletingPathExtension().lastPathComponent
-        let fileExtension = originalURL.pathExtension
-
-        for suffix in 2...999 {
-            let candidateName = fileExtension.isEmpty
-                ? "\(baseName) \(suffix)"
-                : "\(baseName) \(suffix).\(fileExtension)"
-            let candidateURL = directory.appendingPathComponent(candidateName)
-            if !manager.fileExists(atPath: candidateURL.path) {
-                return candidateURL
-            }
-        }
-
-        return directory.appendingPathComponent("\(UUID().uuidString)-\(fileName)")
     }
 
     nonisolated private static func fileURL(from item: NSSecureCoding?) -> URL? {

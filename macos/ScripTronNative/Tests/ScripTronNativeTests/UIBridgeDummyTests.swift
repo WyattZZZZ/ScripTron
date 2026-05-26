@@ -25,6 +25,219 @@ final class UIBridgeDummyTests: XCTestCase {
         XCTAssertTrue(bridge.calledMethods.contains("get_auth_status"))
     }
 
+    func testCreateProjectRejectsEmptyNameBeforeBridgeCall() throws {
+        let bridge = DummyScripTronBridge()
+        let model = AppModel(bridge: bridge)
+
+        model.createProject(named: "   ")
+
+        XCTAssertEqual(model.errorMessage, "Project name cannot be empty.")
+        XCTAssertTrue(bridge.voidCalls.isEmpty)
+    }
+
+    func testCreateProjectDelegatesToRustBridge() throws {
+        let bridge = DummyScripTronBridge()
+        bridge.stubVoid("create_project")
+        bridge.stub("list_workspace_files", json: #"[]"#)
+        bridge.stub("list_projects", json: #"[]"#)
+
+        let model = AppModel(bridge: bridge)
+        model.workspacePath = "/tmp/ScripTron"
+
+        model.createProject(named: "Weekly Digest")
+
+        XCTAssertEqual(bridge.voidCalls.first?.method, "create_project")
+        XCTAssertEqual(bridge.voidCalls.first?.params["name"] as? String, "Weekly Digest")
+        XCTAssertEqual(model.status, "Created project Weekly Digest")
+    }
+
+    func testRefreshFilesLoadsProjectArchiveStateFromBridge() throws {
+        let bridge = DummyScripTronBridge()
+        bridge.stub("list_workspace_files", json: #"[]"#)
+        bridge.stub("list_projects", json: #"[{"name":"weekly-digest","path":"/tmp/ScripTron/weekly-digest","status":"Archived","archived":true,"packaged":false}]"#)
+
+        let model = AppModel(bridge: bridge)
+        model.workspacePath = "/tmp/ScripTron"
+
+        model.refreshFiles()
+
+        XCTAssertEqual(model.projects.count, 1)
+        XCTAssertEqual(model.projects.first?.name, "weekly-digest")
+        XCTAssertEqual(model.projects.first?.archived, true)
+        XCTAssertTrue(bridge.calledMethods.contains("list_projects"))
+    }
+
+    func testDeleteProjectDelegatesToRustBridge() throws {
+        let bridge = DummyScripTronBridge()
+        bridge.stubVoid("delete_project")
+        bridge.stub("list_workspace_files", json: #"[]"#)
+        bridge.stub("list_projects", json: #"[]"#)
+
+        let model = AppModel(bridge: bridge)
+        model.workspacePath = "/tmp/ScripTron"
+        let project = AppModel.ProjectItem(
+            name: "weekly-digest",
+            path: "/tmp/ScripTron/weekly-digest",
+            status: "Ready"
+        )
+
+        model.deleteProject(project)
+
+        XCTAssertEqual(bridge.voidCalls.first?.method, "delete_project")
+        XCTAssertEqual(bridge.voidCalls.first?.params["path"] as? String, "/tmp/ScripTron/weekly-digest")
+        XCTAssertEqual(model.status, "Deleted weekly-digest")
+    }
+
+    func testCreateFolderDelegatesToRustBridge() throws {
+        let bridge = DummyScripTronBridge()
+        bridge.stub("create_folder", json: #"{"name":"Drafts","path":"/tmp/ScripTron/Demo/Drafts","is_dir":true,"is_tron":false}"#)
+        bridge.stub("list_dir_files", json: #"[]"#)
+
+        let model = AppModel(bridge: bridge)
+        model.activeProjectPath = "/tmp/ScripTron/Demo"
+        model.screen = .project(.explorer)
+
+        model.createFolder(named: "Drafts")
+
+        XCTAssertEqual(bridge.calledMethods.first, "create_folder")
+        XCTAssertEqual(bridge.lastParams["create_folder"]?["parent_path"] as? String, "/tmp/ScripTron/Demo")
+        XCTAssertEqual(bridge.lastParams["create_folder"]?["name"] as? String, "Drafts")
+        XCTAssertEqual(model.status, "Created folder Drafts")
+    }
+
+    func testRenameFileDelegatesToRustBridge() throws {
+        let bridge = DummyScripTronBridge()
+        bridge.stub("rename_entry", json: #"{"name":"final.md","path":"/tmp/ScripTron/Demo/final.md","is_dir":false,"is_tron":false}"#)
+        bridge.stub("list_dir_files", json: #"[]"#)
+
+        let model = AppModel(bridge: bridge)
+        model.activeProjectPath = "/tmp/ScripTron/Demo"
+        model.screen = .project(.explorer)
+        let file = FileEntry(name: "draft.md", path: "/tmp/ScripTron/Demo/draft.md", is_dir: false, is_tron: false)
+
+        model.renameFile(file, to: "final.md")
+
+        XCTAssertEqual(bridge.calledMethods.first, "rename_entry")
+        XCTAssertEqual(bridge.lastParams["rename_entry"]?["path"] as? String, "/tmp/ScripTron/Demo/draft.md")
+        XCTAssertEqual(bridge.lastParams["rename_entry"]?["name"] as? String, "final.md")
+        XCTAssertEqual(model.status, "Renamed to final.md")
+    }
+
+    func testCreatePlainFileDelegatesToRustBridge() throws {
+        let bridge = DummyScripTronBridge()
+        bridge.stub("create_file", json: #"{"name":"notes.md","path":"/tmp/ScripTron/Demo/notes.md","is_dir":false,"is_tron":false}"#)
+        bridge.stub("list_dir_files", json: #"[]"#)
+
+        let model = AppModel(bridge: bridge)
+        model.activeProjectPath = "/tmp/ScripTron/Demo"
+        model.screen = .project(.explorer)
+
+        model.createFile(named: "notes", fileExtension: "md")
+
+        XCTAssertEqual(bridge.calledMethods.first, "create_file")
+        XCTAssertEqual(bridge.lastParams["create_file"]?["parent_path"] as? String, "/tmp/ScripTron/Demo")
+        XCTAssertEqual(bridge.lastParams["create_file"]?["name"] as? String, "notes.md")
+        XCTAssertEqual(model.status, "Created notes.md")
+    }
+
+    func testDeleteFileDelegatesToRustBridge() throws {
+        let bridge = DummyScripTronBridge()
+        bridge.stubVoid("delete_entry")
+        bridge.stub("list_dir_files", json: #"[]"#)
+
+        let model = AppModel(bridge: bridge)
+        model.activeProjectPath = "/tmp/ScripTron/Demo"
+        model.screen = .project(.explorer)
+        let file = FileEntry(name: "notes.md", path: "/tmp/ScripTron/Demo/notes.md", is_dir: false, is_tron: false)
+
+        model.deleteFile(file)
+
+        XCTAssertEqual(bridge.voidCalls.first?.method, "delete_entry")
+        XCTAssertEqual(bridge.voidCalls.first?.params["path"] as? String, "/tmp/ScripTron/Demo/notes.md")
+        XCTAssertEqual(model.status, "Deleted notes.md")
+    }
+
+    func testCopyDroppedFilesDelegatesToRustBridge() throws {
+        let bridge = DummyScripTronBridge()
+        bridge.stub("copy_entry", json: #"{"name":"notes 2.md","path":"/tmp/ScripTron/Demo/notes 2.md","is_dir":false,"is_tron":false}"#)
+        bridge.stub("list_dir_files", json: #"[]"#)
+
+        let model = AppModel(bridge: bridge)
+        model.workspacePath = "/tmp/ScripTron"
+        model.activeProjectPath = "/tmp/ScripTron/Demo"
+        model.screen = .project(.explorer)
+
+        let sourceURL = URL(fileURLWithPath: "/tmp/ScripTron/Demo/notes.md")
+        let provider = NSItemProvider(object: sourceURL as NSURL)
+
+        XCTAssertTrue(model.copyDroppedFiles([provider], to: "/tmp/ScripTron/Demo"))
+        let expectation = XCTestExpectation(description: "copy callback")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { expectation.fulfill() }
+        wait(for: [expectation], timeout: 1.0)
+
+        XCTAssertEqual(bridge.calledMethods.first, "copy_entry")
+        XCTAssertEqual(bridge.lastParams["copy_entry"]?["path"] as? String, sourceURL.path)
+        XCTAssertEqual(bridge.lastParams["copy_entry"]?["target_directory_path"] as? String, "/tmp/ScripTron/Demo")
+        XCTAssertEqual(model.status, "Copied notes 2.md")
+    }
+
+    func testMoveDroppedFilesDelegatesToRustBridge() throws {
+        let bridge = DummyScripTronBridge()
+        bridge.stub("move_entry", json: #"{"name":"final.md","path":"/tmp/ScripTron/Demo/Final/final.md","is_dir":false,"is_tron":false}"#)
+        bridge.stub("list_dir_files", json: #"[]"#)
+
+        let model = AppModel(bridge: bridge)
+        model.workspacePath = "/tmp/ScripTron"
+        model.activeProjectPath = "/tmp/ScripTron/Demo"
+        model.screen = .project(.explorer)
+
+        let sourceURL = URL(fileURLWithPath: "/tmp/ScripTron/Demo/draft.md")
+        let provider = NSItemProvider(object: sourceURL as NSURL)
+
+        XCTAssertTrue(model.moveDroppedFiles([provider], to: "/tmp/ScripTron/Demo/Final"))
+        let expectation = XCTestExpectation(description: "move callback")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { expectation.fulfill() }
+        wait(for: [expectation], timeout: 1.0)
+
+        XCTAssertEqual(bridge.calledMethods.first, "move_entry")
+        XCTAssertEqual(bridge.lastParams["move_entry"]?["path"] as? String, sourceURL.path)
+        XCTAssertEqual(bridge.lastParams["move_entry"]?["target_directory_path"] as? String, "/tmp/ScripTron/Demo/Final")
+        XCTAssertEqual(model.status, "Moved final.md")
+    }
+
+    func testImportProjectZipDropsDelegatesToRustBridge() throws {
+        let bridge = DummyScripTronBridge()
+        bridge.stub("import_zip_project", json: #"{"name":"bundle","path":"/tmp/ScripTron/bundle","status":"Ready","archived":false,"packaged":false}"#)
+        bridge.stub("list_workspace_files", json: #"[]"#)
+        bridge.stub("list_projects", json: #"[]"#)
+
+        let model = AppModel(bridge: bridge)
+        model.workspacePath = "/tmp/ScripTron"
+
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let bundleDir = tempDir.appendingPathComponent("bundle")
+        try FileManager.default.createDirectory(at: bundleDir, withIntermediateDirectories: true)
+        try "# Imported Project".write(to: bundleDir.appendingPathComponent("main.tron"), atomically: true, encoding: .utf8)
+        let sourceURL = tempDir.appendingPathComponent("bundle.zip")
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+        process.arguments = ["-c", "-k", bundleDir.path, sourceURL.path]
+        try process.run()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
+
+        let provider = NSItemProvider(object: sourceURL as NSURL)
+
+        XCTAssertTrue(model.importProjectZipDrops([provider]))
+        let expectation = XCTestExpectation(description: "import callback")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { expectation.fulfill() }
+        wait(for: [expectation], timeout: 1.0)
+
+        XCTAssertEqual(bridge.calledMethods.first, "import_zip_project")
+        XCTAssertEqual(bridge.lastParams["import_zip_project"]?["path"] as? String, sourceURL.path)
+        XCTAssertEqual(model.status, "Imported bundle")
+    }
+
     func testSubmitHermesPromptUsesInjectedBridgeAndStoresDummyRunEventsByBlock() async throws {
         let bridge = DummyScripTronBridge()
         let fileJSON = #"""
@@ -149,14 +362,16 @@ final class UIBridgeDummyTests: XCTestCase {
         XCTAssertFalse(model.isDirty)
     }
 
-    func testPlainFileEditingMarksDirtyAndSavesToDisk() throws {
+    func testPlainFileEditingMarksDirtyAndSavesThroughBridge() throws {
         let tempDir = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
         let fileURL = tempDir.appendingPathComponent("notes.md")
         try "Initial notes".write(to: fileURL, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: tempDir) }
 
-        let model = AppModel(bridge: DummyScripTronBridge())
+        let bridge = DummyScripTronBridge()
+        bridge.stubVoid("save_plain_file")
+        let model = AppModel(bridge: bridge)
         model.workspacePath = tempDir.path
         model.activeProjectPath = tempDir.path
 
@@ -168,7 +383,9 @@ final class UIBridgeDummyTests: XCTestCase {
 
         model.saveSelectedFile()
 
-        XCTAssertEqual(try String(contentsOf: fileURL, encoding: .utf8), "Edited notes")
+        XCTAssertEqual(bridge.voidCalls.first?.method, "save_plain_file")
+        XCTAssertEqual(bridge.voidCalls.first?.params["path"] as? String, fileURL.path)
+        XCTAssertEqual(bridge.voidCalls.first?.params["content"] as? String, "Edited notes")
         XCTAssertFalse(model.isDirty)
         XCTAssertEqual(model.status, "Saved notes.md")
     }
@@ -290,6 +507,7 @@ final class DummyScripTronBridge: ScripTronBridgeClient, @unchecked Sendable {
     private var voidMethods: Set<String> = []
     private(set) var calledMethods: [String] = []
     private(set) var voidCalls: [VoidCall] = []
+    private(set) var lastParams: [String: [String: Any]] = [:]
 
     func initialize() throws {
         calledMethods.append("initialize")
@@ -297,6 +515,7 @@ final class DummyScripTronBridge: ScripTronBridgeClient, @unchecked Sendable {
 
     func call<T: Decodable>(_ method: String, params: [String: Any], as type: T.Type) throws -> T {
         calledMethods.append(method)
+        lastParams[method] = params
         guard let json = responses[method] else {
             throw RustBridge.BridgeError.runtime("Missing dummy response for \(method)")
         }

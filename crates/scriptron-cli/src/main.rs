@@ -73,13 +73,28 @@ fn take_flag(args: &mut Vec<String>, flag: &str) -> bool {
 }
 
 fn project_create(name: &str, dry_run: bool) -> Result<(), String> {
-    let root = home_dir().join("Documents");
-    let target = root.join(sanitize(name));
+    let root = workspace_dir();
+    let directory_name = sanitized_project_directory_name(name);
+    if directory_name.is_empty() {
+        return Err(
+            "project create requires a name with letters, numbers, dash, or underscore".into(),
+        );
+    }
+    let target = root.join(directory_name);
     ensure_allowed(&target, None)?;
     if dry_run {
         return print_plan("project.create", &target);
     }
     fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+    fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(target.join("main.tron"))
+        .and_then(|mut file| {
+            use std::io::Write;
+            file.write_all(starter_tron_content(name).as_bytes())
+        })
+        .map_err(|e| e.to_string())?;
     audit(
         &target,
         "project.create",
@@ -345,6 +360,10 @@ fn print_plan(action: &str, target: &Path) -> Result<(), String> {
 fn ensure_allowed(path: &Path, project_path: Option<&Path>) -> Result<(), String> {
     let path = normalize(path);
     let documents = home_dir().join("Documents");
+    let workspace = workspace_dir();
+    if path.starts_with(normalize(&workspace)) {
+        return Ok(());
+    }
     if path.starts_with(normalize(&documents)) {
         return Ok(());
     }
@@ -354,7 +373,7 @@ fn ensure_allowed(path: &Path, project_path: Option<&Path>) -> Result<(), String
         }
     }
     Err(format!(
-        "Refusing to write outside ~/Documents or SCRIPTRON_PROJECT: {}",
+        "Refusing to write outside ~/ScripTron, ~/Documents, or SCRIPTRON_PROJECT: {}",
         path.display()
     ))
 }
@@ -410,7 +429,138 @@ fn sanitize(name: &str) -> String {
     name.trim().replace(['/', ':'], "-")
 }
 
+fn sanitized_project_directory_name(name: &str) -> String {
+    let lower = name.trim().replace(' ', "-").to_lowercase();
+    let mut out = String::with_capacity(lower.len());
+    let mut last_dash = false;
+    for ch in lower.chars() {
+        let safe = if ch.is_ascii_alphanumeric() || ch == '_' {
+            Some(ch)
+        } else if ch == '-' || ch == '/' || ch == ':' || ch == '\\' {
+            Some('-')
+        } else {
+            None
+        };
+        match safe {
+            Some('-') if !last_dash => {
+                out.push('-');
+                last_dash = true;
+            }
+            Some('-') => {}
+            Some(ch) => {
+                out.push(ch);
+                last_dash = false;
+            }
+            None => {}
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
+fn starter_tron_content(project_name: &str) -> String {
+    format!(
+        r#"---blackboard---
+{{
+  "entries": [],
+  "notes": []
+}}
+---
+
+---run: false---
+# {project_name}
+
+Describe the project context, source material, and constraints here.
+---
+
+---run: true---
+[[scriptron:run-name]] first-run
+
+Summarize the project goal and suggest the next concrete step.
+---
+"#
+    )
+}
+
 fn fail(message: &str) -> ! {
     eprintln!("Error: {message}");
     std::process::exit(1);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn temp_home(label: &str) -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("system clock before unix epoch")
+            .as_nanos();
+        env::temp_dir().join(format!(
+            "scriptron-cli-{label}-{}-{nanos}",
+            std::process::id()
+        ))
+    }
+
+    #[test]
+    fn project_create_uses_scriptron_workspace_and_writes_starter_tron() {
+        let _guard = env_lock().lock().expect("lock env");
+        let home = temp_home("project-create");
+        fs::create_dir_all(&home).expect("create temp home");
+        env::set_var("HOME", &home);
+        env::remove_var("SCRIPTRON_PROJECT");
+
+        project_create("Weekly Digest", false).expect("create project");
+
+        let project = home.join("ScripTron").join("weekly-digest");
+        let starter = fs::read_to_string(project.join("main.tron")).expect("read starter tron");
+        assert!(starter.contains("---blackboard---"));
+        assert!(starter.contains("# Weekly Digest"));
+        assert!(starter.contains("[[scriptron:run-name]] first-run"));
+
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn project_create_does_not_overwrite_existing_starter_tron() {
+        let _guard = env_lock().lock().expect("lock env");
+        let home = temp_home("project-create-existing");
+        let project = home.join("ScripTron").join("existing");
+        fs::create_dir_all(&project).expect("create project");
+        fs::write(project.join("main.tron"), "keep me").expect("write existing starter");
+        env::set_var("HOME", &home);
+        env::remove_var("SCRIPTRON_PROJECT");
+
+        let result = project_create("Existing", false);
+
+        assert!(result.is_err());
+        assert_eq!(
+            fs::read_to_string(project.join("main.tron")).expect("read existing starter"),
+            "keep me"
+        );
+
+        let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn project_create_rejects_names_without_safe_path_characters() {
+        let _guard = env_lock().lock().expect("lock env");
+        let home = temp_home("project-create-invalid-name");
+        fs::create_dir_all(&home).expect("create temp home");
+        env::set_var("HOME", &home);
+        env::remove_var("SCRIPTRON_PROJECT");
+
+        let result = project_create("!!!", false);
+
+        assert!(result.is_err());
+        assert!(!home.join("ScripTron").join("main.tron").exists());
+
+        let _ = fs::remove_dir_all(home);
+    }
 }

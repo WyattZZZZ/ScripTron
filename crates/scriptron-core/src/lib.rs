@@ -25,6 +25,15 @@ pub struct FileEntry {
     pub is_tron: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectEntry {
+    pub name: String,
+    pub path: String,
+    pub status: String,
+    pub archived: bool,
+    pub packaged: bool,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ActiveConfig {
     pub provider: String,
@@ -402,6 +411,280 @@ impl ScriptronCore {
         list_dir(PathBuf::from(path)).await
     }
 
+    pub async fn list_projects(&self) -> Result<Vec<ProjectEntry>, String> {
+        let memory = self.load_troner_memory().await?;
+        let mut projects = Vec::new();
+        let mut entries = tokio::fs::read_dir(&self.workspace_dir)
+            .await
+            .map_err(|e| e.to_string())?;
+        while let Some(entry) = entries.next_entry().await.map_err(|e| e.to_string())? {
+            let path = entry.path();
+            let name = entry.file_name().to_string_lossy().into_owned();
+            if name.starts_with('.') || !path.is_dir() {
+                continue;
+            }
+            let path_text = path.to_string_lossy().into_owned();
+            let archived = memory
+                .projects
+                .get(&path_text)
+                .map(|project| project.archived)
+                .unwrap_or(false);
+            projects.push(ProjectEntry {
+                name,
+                path: path_text,
+                status: if archived { "Archived" } else { "Ready" }.into(),
+                archived,
+                packaged: false,
+            });
+        }
+        projects.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(projects)
+    }
+
+    pub async fn create_project(&self, name: String) -> Result<(), String> {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            return Err("Project name cannot be empty.".into());
+        }
+        let directory_name = sanitized_project_directory_name(trimmed);
+        if directory_name.is_empty() {
+            return Err("Project name cannot be empty.".into());
+        }
+        let project_dir = unique_child_path(&self.workspace_dir, &directory_name);
+        tokio::fs::create_dir_all(&project_dir)
+            .await
+            .map_err(|e| e.to_string())?;
+        let starter_path = project_dir.join("main.tron");
+        let mut file = tokio::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&starter_path)
+            .await
+            .map_err(|e| e.to_string())?;
+        use tokio::io::AsyncWriteExt;
+        file.write_all(starter_tron_content(trimmed).as_bytes())
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut memory = self.load_troner_memory().await?;
+        ensure_project_memory(&mut memory, &project_dir.to_string_lossy());
+        self.save_troner_memory(&memory).await?;
+        Ok(())
+    }
+
+    pub async fn archive_project(&self, path: String) -> Result<(), String> {
+        self.set_project_archived(path, true).await
+    }
+
+    pub async fn restore_project(&self, path: String) -> Result<(), String> {
+        self.set_project_archived(path, false).await
+    }
+
+    pub async fn delete_project(&self, path: String) -> Result<(), String> {
+        let project_path = PathBuf::from(&path);
+        if !project_path.starts_with(&self.workspace_dir) || project_path == self.workspace_dir {
+            return Err(format!("Refusing to delete outside workspace: {path}"));
+        }
+        if !project_path.is_dir() {
+            return Err(format!("Project path is not a directory: {path}"));
+        }
+        tokio::fs::remove_dir_all(&project_path)
+            .await
+            .map_err(|e| e.to_string())?;
+        let mut memory = self.load_troner_memory().await?;
+        memory.projects.remove(&path);
+        memory.audit_log.push(audit_event(
+            "project.delete",
+            serde_json::json!({ "path": path }),
+        ));
+        self.save_troner_memory(&memory).await
+    }
+
+    pub async fn create_folder(
+        &self,
+        parent_path: String,
+        name: String,
+    ) -> Result<FileEntry, String> {
+        let parent = self.workspace_child_dir(&parent_path)?;
+        let folder_name =
+            sanitized_file_name(&name).ok_or_else(|| "Folder name cannot be empty.".to_string())?;
+        let target = unique_child_path(&parent, &folder_name);
+        tokio::fs::create_dir_all(&target)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(file_entry(target))
+    }
+
+    pub async fn create_file(
+        &self,
+        parent_path: String,
+        name: String,
+    ) -> Result<FileEntry, String> {
+        let parent = self.workspace_child_dir(&parent_path)?;
+        let file_name =
+            sanitized_file_name(&name).ok_or_else(|| "File name cannot be empty.".to_string())?;
+        let target = unique_child_path(&parent, &file_name);
+        tokio::fs::OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&target)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(file_entry(target))
+    }
+
+    pub async fn rename_entry(&self, path: String, name: String) -> Result<FileEntry, String> {
+        let source = self.workspace_child_path(&path)?;
+        if !source.exists() {
+            return Err(format!("Path does not exist: {path}"));
+        }
+        let target_name =
+            sanitized_file_name(&name).ok_or_else(|| "Name cannot be empty.".to_string())?;
+        let parent = source
+            .parent()
+            .ok_or_else(|| "Cannot rename workspace root".to_string())?;
+        let target = unique_child_path(parent, &target_name);
+        tokio::fs::rename(&source, &target)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(file_entry(target))
+    }
+
+    pub async fn delete_entry(&self, path: String) -> Result<(), String> {
+        let target = self.workspace_child_path(&path)?;
+        if target.is_dir() {
+            tokio::fs::remove_dir_all(&target)
+                .await
+                .map_err(|e| e.to_string())
+        } else if target.is_file() {
+            tokio::fs::remove_file(&target)
+                .await
+                .map_err(|e| e.to_string())
+        } else {
+            Err(format!("Path does not exist: {path}"))
+        }
+    }
+
+    pub async fn save_plain_file(&self, path: String, content: String) -> Result<(), String> {
+        let target = self.workspace_child_path(&path)?;
+        if target.is_dir() {
+            return Err(format!("Path is a directory: {path}"));
+        }
+        tokio::fs::write(target, content)
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    pub async fn import_zip_project(&self, source_path: String) -> Result<ProjectEntry, String> {
+        let source = PathBuf::from(&source_path);
+        if source.extension().and_then(|ext| ext.to_str()) != Some("zip") {
+            return Err("Only .zip files can be imported as projects.".into());
+        }
+        if !source.is_file() {
+            return Err(format!("Zip file does not exist: {source_path}"));
+        }
+
+        let raw_name = source
+            .file_stem()
+            .map(|name| name.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "Imported Project".into());
+        let directory_name = {
+            let sanitized = sanitized_project_directory_name(&raw_name);
+            if sanitized.is_empty() {
+                "Imported Project".to_string()
+            } else {
+                sanitized
+            }
+        };
+        let project_dir = unique_child_path(&self.workspace_dir, &directory_name);
+        tokio::fs::create_dir_all(&project_dir)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        let source_clone = source.clone();
+        let project_clone = project_dir.clone();
+        let extraction = tokio::task::spawn_blocking(move || {
+            let source_arg = source_clone.to_string_lossy().into_owned();
+            let project_arg = project_clone.to_string_lossy().into_owned();
+            let status = std::process::Command::new("/usr/bin/ditto")
+                .args(["-x", "-k", source_arg.as_str(), project_arg.as_str()])
+                .status()
+                .map_err(|e| e.to_string())?;
+            if status.success() {
+                Ok(())
+            } else {
+                Err(format!("Could not unzip {}.", source_clone.display()))
+            }
+        })
+        .await
+        .map_err(|e| e.to_string())?;
+
+        if let Err(error) = extraction {
+            let _ = tokio::fs::remove_dir_all(&project_dir).await;
+            return Err(error);
+        }
+
+        Ok(ProjectEntry {
+            name: project_dir
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or(directory_name),
+            path: project_dir.to_string_lossy().into_owned(),
+            status: "Ready".into(),
+            archived: false,
+            packaged: false,
+        })
+    }
+
+    pub async fn copy_entry(
+        &self,
+        path: String,
+        target_directory_path: String,
+    ) -> Result<FileEntry, String> {
+        let source = self.workspace_child_path(&path)?;
+        if !source.exists() {
+            return Err(format!("Path does not exist: {path}"));
+        }
+        let target_directory = self.workspace_child_dir(&target_directory_path)?;
+        if source.is_dir() && target_directory.starts_with(&source) {
+            return Err("A folder cannot be copied into itself.".into());
+        }
+        let name = source
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .ok_or_else(|| "Path cannot be copied".to_string())?;
+        let destination = unique_child_path(&target_directory, &name);
+        let source_clone = source.clone();
+        let destination_clone = destination.clone();
+        tokio::task::spawn_blocking(move || copy_path_recursive(&source_clone, &destination_clone))
+            .await
+            .map_err(|e| e.to_string())??;
+        Ok(file_entry(destination))
+    }
+
+    pub async fn move_entry(
+        &self,
+        path: String,
+        target_directory_path: String,
+    ) -> Result<FileEntry, String> {
+        let source = self.workspace_child_path(&path)?;
+        if !source.exists() {
+            return Err(format!("Path does not exist: {path}"));
+        }
+        let target_directory = self.workspace_child_dir(&target_directory_path)?;
+        if source.is_dir() && target_directory.starts_with(&source) {
+            return Err("A folder cannot be moved into itself.".into());
+        }
+        let name = source
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned())
+            .ok_or_else(|| "Path cannot be moved".to_string())?;
+        let destination = unique_child_path(&target_directory, &name);
+        tokio::fs::rename(&source, &destination)
+            .await
+            .map_err(|e| e.to_string())?;
+        Ok(file_entry(destination))
+    }
+
     pub async fn open_tron_file(&self, path: String) -> Result<TronFileDto, String> {
         tron_parser::parse_file(&path)
             .map(|f| TronFileDto {
@@ -563,14 +846,14 @@ impl ScriptronCore {
     }
 
     pub async fn hermes_skills_browse(&self) -> Result<Vec<HermesSkillCatalogItem>, String> {
-        run_hermes_skill_catalog_command(&["skills", "browse", "--json"]).await
+        run_hermes_skill_catalog_command(&["skills", "browse", "--size", "100"]).await
     }
 
     pub async fn hermes_skills_search(
         &self,
         query: String,
     ) -> Result<Vec<HermesSkillCatalogItem>, String> {
-        run_hermes_skill_catalog_command(&["skills", "search", &query, "--json"]).await
+        run_hermes_skill_catalog_command(&["skills", "search", &query, "--limit", "20"]).await
     }
 
     pub async fn hermes_skills_install(&self, install_ref: String) -> Result<(), String> {
@@ -947,6 +1230,47 @@ impl ScriptronCore {
             .await
             .map_err(|e| e.to_string())
     }
+
+    async fn set_project_archived(&self, path: String, archived: bool) -> Result<(), String> {
+        let project_path = PathBuf::from(&path);
+        if !project_path.is_dir() {
+            return Err(format!("Project path is not a directory: {path}"));
+        }
+        let mut memory = self.load_troner_memory().await?;
+        let mut project = ensure_project_memory(&mut memory, &path);
+        project.archived = archived;
+        memory.projects.insert(path.clone(), project);
+        memory.audit_log.push(audit_event(
+            if archived {
+                "project.archive"
+            } else {
+                "project.restore"
+            },
+            serde_json::json!({ "path": path }),
+        ));
+        self.save_troner_memory(&memory).await
+    }
+
+    fn workspace_child_dir(&self, path: &str) -> Result<PathBuf, String> {
+        let path = self.workspace_child_path(path)?;
+        if path.is_dir() {
+            Ok(path)
+        } else {
+            Err(format!("Path is not a directory: {}", path.display()))
+        }
+    }
+
+    fn workspace_child_path(&self, path: &str) -> Result<PathBuf, String> {
+        let path = PathBuf::from(path);
+        if path.starts_with(&self.workspace_dir) && path != self.workspace_dir {
+            Ok(path)
+        } else {
+            Err(format!(
+                "Refusing to access outside workspace: {}",
+                path.display()
+            ))
+        }
+    }
 }
 
 fn hermes_binary() -> String {
@@ -965,8 +1289,8 @@ async fn run_hermes_skill_catalog_command(
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
     }
-    let mut items: Vec<HermesSkillCatalogItem> =
-        serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())?;
+    let mut items: Vec<HermesSkillCatalogItem> = serde_json::from_slice(&output.stdout)
+        .or_else(|_| parse_hermes_skill_catalog_text(&String::from_utf8_lossy(&output.stdout)))?;
     for item in &mut items {
         item.source = default_hermes_source();
         if item.install_ref.is_none() {
@@ -975,6 +1299,67 @@ async fn run_hermes_skill_catalog_command(
     }
     items.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(items)
+}
+
+fn parse_hermes_skill_catalog_text(output: &str) -> Result<Vec<HermesSkillCatalogItem>, String> {
+    let mut items = Vec::new();
+    for line in output.lines() {
+        let trimmed = line.trim_start();
+        if !trimmed.starts_with('│') {
+            continue;
+        }
+        let columns = trimmed
+            .split('│')
+            .skip(1)
+            .map(|part| part.trim())
+            .collect::<Vec<_>>();
+        if columns.len() < 4 {
+            continue;
+        }
+
+        let (name, description, source, trust, install_ref) = if columns
+            .first()
+            .and_then(|value| value.parse::<usize>().ok())
+            .is_some()
+        {
+            if columns.len() < 5 {
+                continue;
+            }
+            (columns[1], columns[2], columns[3], columns[4], None)
+        } else {
+            (columns[0], columns[1], columns[2], columns[3], columns.get(4).copied())
+        };
+
+        if name.is_empty() || name == "Name" || source.is_empty() {
+            continue;
+        }
+
+        let trust_level = trust
+            .trim_start_matches('★')
+            .trim()
+            .to_string();
+        items.push(HermesSkillCatalogItem {
+            name: name.to_string(),
+            description: description.to_string(),
+            source: default_hermes_source(),
+            category: String::new(),
+            trust_level,
+            installed: false,
+            install_ref: Some(
+                install_ref
+                    .filter(|value| !value.is_empty())
+                    .unwrap_or(name)
+                    .to_string(),
+            ),
+            wraps_external_cli: false,
+        });
+    }
+
+    if items.is_empty() {
+        Err("Hermes skill catalog output did not contain parseable items".into())
+    } else {
+        Ok(items)
+    }
 }
 
 const RUN_NAME_PREFIX: &str = "[[scriptron:run-name]]";
@@ -1870,9 +2255,149 @@ async fn list_dir(dir: PathBuf) -> Result<Vec<FileEntry>, String> {
     Ok(entries)
 }
 
+fn file_entry(path: PathBuf) -> FileEntry {
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let is_dir = path.is_dir();
+    let is_tron = path.extension().map(|e| e == "tron").unwrap_or(false);
+    FileEntry {
+        name,
+        path: path.to_string_lossy().into_owned(),
+        is_dir,
+        is_tron,
+    }
+}
+
+fn copy_path_recursive(source: &Path, destination: &Path) -> Result<(), String> {
+    if source.is_dir() {
+        std::fs::create_dir_all(destination).map_err(|e| e.to_string())?;
+        for entry in std::fs::read_dir(source).map_err(|e| e.to_string())? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let child_source = entry.path();
+            let child_destination = destination.join(entry.file_name());
+            copy_path_recursive(&child_source, &child_destination)?;
+        }
+        return Ok(());
+    }
+
+    if source.is_file() {
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+        }
+        std::fs::copy(source, destination).map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    Err(format!("Path does not exist: {}", source.display()))
+}
+
 fn default_active_config() -> ActiveConfig {
     ActiveConfig {
         provider: "hermes".into(),
         model: "Hermes managed".into(),
     }
+}
+
+fn sanitized_project_directory_name(name: &str) -> String {
+    let lower = name.trim().replace(' ', "-").to_lowercase();
+    let mut out = String::with_capacity(lower.len());
+    let mut last_dash = false;
+    for ch in lower.chars() {
+        let safe = if ch.is_ascii_alphanumeric() || ch == '_' {
+            Some(ch)
+        } else if ch == '-' || ch == '/' || ch == ':' || ch == '\\' {
+            Some('-')
+        } else {
+            None
+        };
+        match safe {
+            Some('-') if !last_dash => {
+                out.push('-');
+                last_dash = true;
+            }
+            Some('-') => {}
+            Some(ch) => {
+                out.push(ch);
+                last_dash = false;
+            }
+            None => {}
+        }
+    }
+    out.trim_matches('-').to_string()
+}
+
+fn sanitized_file_name(name: &str) -> Option<String> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut out = String::with_capacity(trimmed.len());
+    let mut last_dash = false;
+    for ch in trimmed.chars() {
+        let safe = if ch.is_ascii_alphanumeric() || ch == '_' || ch == '.' {
+            Some(ch)
+        } else if ch == '-' || ch == ' ' || ch == '/' || ch == ':' || ch == '\\' {
+            Some('-')
+        } else {
+            None
+        };
+        match safe {
+            Some('-') if !last_dash => {
+                out.push('-');
+                last_dash = true;
+            }
+            Some('-') => {}
+            Some(ch) => {
+                out.push(ch);
+                last_dash = false;
+            }
+            None => {}
+        }
+    }
+    let cleaned = out.trim_matches('-').to_string();
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
+
+fn unique_child_path(parent: &Path, child_name: &str) -> PathBuf {
+    let original = parent.join(child_name);
+    if !original.exists() {
+        return original;
+    }
+    for suffix in 2..=999 {
+        let candidate = parent.join(format!("{child_name}-{suffix}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    parent.join(format!("{}-{}", child_name, Utc::now().timestamp_millis()))
+}
+
+fn starter_tron_content(project_name: &str) -> String {
+    format!(
+        r#"---blackboard---
+{{
+  "entries": [],
+  "notes": []
+}}
+---
+
+---run: false---
+# {project_name}
+
+Describe the project context, source material, and constraints here.
+---
+
+---run: true---
+[[scriptron:run-name]] first-run
+
+Summarize the project goal and suggest the next concrete step.
+---
+"#
+    )
 }

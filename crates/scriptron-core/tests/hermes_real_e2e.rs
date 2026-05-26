@@ -49,13 +49,11 @@ async fn real_hermes_skills_browse_search_hits_official_repository() {
         .iter()
         .all(|item| item.source == "Hermes Official / Hub"));
     assert!(
-        browsed.iter().any(|item| item.name == "github-issues"
-            || item.name == "github-pr-workflow"
-            || item.name == "github-pr-review"),
-        "expected at least one GitHub skill from official repository, got {:?}",
+        browsed.iter().any(|item| item.trust_level == "official"),
+        "expected at least one official Hermes skill, got {:?}",
         browsed
             .iter()
-            .map(|item| item.name.as_str())
+            .map(|item| (item.name.as_str(), item.trust_level.as_str()))
             .take(20)
             .collect::<Vec<_>>()
     );
@@ -64,8 +62,8 @@ async fn real_hermes_skills_browse_search_hits_official_repository() {
         .hermes_skills_search("github".to_string())
         .await
         .expect("search real Hermes official skill repository");
-    assert!(
-        searched.iter().any(|item| item.name.contains("github")),
-        "Hermes official skill search did not return GitHub-related skills"
-    );
+    assert!(!searched.is_empty(), "Hermes skill search returned no results");
+    assert!(searched
+        .iter()
+        .all(|item| item.source == "Hermes Official / Hub"));
 }

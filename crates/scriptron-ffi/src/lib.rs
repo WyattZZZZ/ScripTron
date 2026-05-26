@@ -68,9 +68,76 @@ async fn dispatch(request: RpcRequest) -> Result<Value, String> {
         "list_workspace_files" => {
             serde_json::to_value(core.list_workspace_files().await?).map_err(|e| e.to_string())
         }
+        "list_projects" => {
+            serde_json::to_value(core.list_projects().await?).map_err(|e| e.to_string())
+        }
         "list_dir_files" => {
             let path = required_string(&request.params, "path")?;
             serde_json::to_value(core.list_dir_files(path).await?).map_err(|e| e.to_string())
+        }
+        "create_project" => {
+            let name = required_string(&request.params, "name")?;
+            core.create_project(name).await?;
+            Ok(json!(null))
+        }
+        "archive_project" => {
+            let path = required_string(&request.params, "path")?;
+            core.archive_project(path).await?;
+            Ok(json!(null))
+        }
+        "restore_project" => {
+            let path = required_string(&request.params, "path")?;
+            core.restore_project(path).await?;
+            Ok(json!(null))
+        }
+        "delete_project" => {
+            let path = required_string(&request.params, "path")?;
+            core.delete_project(path).await?;
+            Ok(json!(null))
+        }
+        "create_folder" => {
+            let parent_path = required_string(&request.params, "parent_path")?;
+            let name = required_string(&request.params, "name")?;
+            serde_json::to_value(core.create_folder(parent_path, name).await?)
+                .map_err(|e| e.to_string())
+        }
+        "create_file" => {
+            let parent_path = required_string(&request.params, "parent_path")?;
+            let name = required_string(&request.params, "name")?;
+            serde_json::to_value(core.create_file(parent_path, name).await?)
+                .map_err(|e| e.to_string())
+        }
+        "rename_entry" => {
+            let path = required_string(&request.params, "path")?;
+            let name = required_string(&request.params, "name")?;
+            serde_json::to_value(core.rename_entry(path, name).await?).map_err(|e| e.to_string())
+        }
+        "copy_entry" => {
+            let path = required_string(&request.params, "path")?;
+            let target_directory_path = required_string(&request.params, "target_directory_path")?;
+            serde_json::to_value(core.copy_entry(path, target_directory_path).await?)
+                .map_err(|e| e.to_string())
+        }
+        "move_entry" => {
+            let path = required_string(&request.params, "path")?;
+            let target_directory_path = required_string(&request.params, "target_directory_path")?;
+            serde_json::to_value(core.move_entry(path, target_directory_path).await?)
+                .map_err(|e| e.to_string())
+        }
+        "import_zip_project" => {
+            let path = required_string(&request.params, "path")?;
+            serde_json::to_value(core.import_zip_project(path).await?).map_err(|e| e.to_string())
+        }
+        "delete_entry" => {
+            let path = required_string(&request.params, "path")?;
+            core.delete_entry(path).await?;
+            Ok(json!(null))
+        }
+        "save_plain_file" => {
+            let path = required_string(&request.params, "path")?;
+            let content = required_string(&request.params, "content")?;
+            core.save_plain_file(path, content).await?;
+            Ok(json!(null))
         }
         "open_tron_file" => {
             let path = required_string(&request.params, "path")?;
@@ -372,8 +439,8 @@ mod tests {
         .expect("install dispatch");
 
         let log = fs::read_to_string(command_log).expect("read fake hermes command log");
-        assert!(log.contains("skills browse --json"));
-        assert!(log.contains("skills search github --json"));
+        assert!(log.contains("skills browse --size 100"));
+        assert!(log.contains("skills search github --limit 20"));
         assert!(log.contains("skills install github-pr-review"));
     }
 }
