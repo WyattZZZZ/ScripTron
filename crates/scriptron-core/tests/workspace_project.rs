@@ -42,6 +42,72 @@ async fn create_project_creates_workspace_project_with_starter_tron() {
 }
 
 #[tokio::test]
+async fn hermes_prompt_submit_exports_workspace_cli_registry_as_local_hermes_skill() {
+    let _guard = env_lock().lock().expect("lock env");
+    let home = unique_temp_home("core-hermes-bridge-skill");
+    fs::create_dir_all(&home).expect("create temp home");
+    std::env::set_var("HOME", &home);
+
+    let workspace = home.join("ScripTron");
+    let codex_dir = workspace.join(".register").join("codex");
+    fs::create_dir_all(&codex_dir).expect("create codex registry dir");
+    fs::write(
+        codex_dir.join("run.sh"),
+        "#!/usr/bin/env bash\necho codex\n",
+    )
+    .expect("write run script");
+    fs::write(
+        codex_dir.join("manifest.json"),
+        serde_json::json!({
+            "name": "codex",
+            "kind": "model",
+            "description": "Run Codex from ScripTron.",
+            "version": "0.1.0",
+            "command": codex_dir.join("run.sh").to_string_lossy(),
+            "args_schema": [
+                {
+                    "name": "prompt",
+                    "description": "Prompt text.",
+                    "required": true,
+                    "type": "string"
+                }
+            ],
+            "examples": ["codex --prompt hello"]
+        })
+        .to_string(),
+    )
+    .expect("write manifest");
+
+    let core = ScriptronCore::init().await.expect("init core");
+    core.hermes_prompt_submit(
+        vec![tron_parser::TronCell {
+            run: true,
+            content: "[[scriptron:run-name]] bridge\nList available ScripTron tools.".into(),
+        }],
+        workspace.to_string_lossy().into_owned(),
+        None,
+        None,
+    )
+    .await
+    .expect("submit hermes prompt");
+
+    let bridge_skill = fs::read_to_string(
+        home.join(".hermes")
+            .join("skills")
+            .join("scriptron-workspace")
+            .join("SKILL.md"),
+    )
+    .expect("read exported bridge skill");
+    assert!(bridge_skill.contains("# ScripTron Workspace Tools"));
+    assert!(bridge_skill.contains("codex"));
+    assert!(bridge_skill.contains("Run Codex from ScripTron."));
+    assert!(bridge_skill.contains(&codex_dir.join("run.sh").to_string_lossy().to_string()));
+    assert!(bridge_skill.contains("prompt"));
+
+    let _ = fs::remove_dir_all(home);
+}
+
+#[tokio::test]
 async fn archive_and_restore_project_persist_in_project_listing() {
     let _guard = env_lock().lock().expect("lock env");
     let home = unique_temp_home("core-archive-project");
