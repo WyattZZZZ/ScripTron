@@ -119,6 +119,365 @@ final class HermesMigrationTests: XCTestCase {
         XCTAssertTrue(commands.contains { $0.icon == "pause.circle" && $0.method == "session.interrupt" })
     }
 
+    func testExtensionCatalogPaginatesAndCarriesOfficialTagsAndIcons() throws {
+        let items = (1...15).map { index in
+            ExtensionCatalogItem(
+                name: "official-skill-\(index)",
+                kind: .skill,
+                source: .hermesHub,
+                category: index.isMultiple(of: 2) ? "Research" : "Software Dev",
+                trustLevel: "official",
+                description: "Official Hermes skill \(index)",
+                installed: false,
+                wrapsExternalCLI: index.isMultiple(of: 3),
+                hermesCompatible: true,
+                installRef: "official-skill-\(index)",
+                tags: ["official", "hermes", index.isMultiple(of: 3) ? "cli" : "skill"],
+                icon: index.isMultiple(of: 3) ? "terminal" : "sparkles"
+            )
+        }
+        let catalog = ExtensionCatalogState(items: items, pageSize: 6)
+
+        XCTAssertEqual(catalog.pageCount(source: .hermesHub, category: "All", query: ""), 3)
+        XCTAssertEqual(
+            catalog.page(source: .hermesHub, category: "All", query: "", page: 2).map(\.name),
+            ["official-skill-15", "official-skill-2", "official-skill-3", "official-skill-4", "official-skill-5", "official-skill-6"]
+        )
+        XCTAssertEqual(items[2].tags, ["official", "hermes", "cli"])
+        XCTAssertEqual(items[2].icon, "terminal")
+        XCTAssertEqual(items[2].displayBadges, ["Hermes Official / Hub", "Software Dev", "official", "hermes", "cli"])
+    }
+
+    func testWorkspaceAndProjectPresentationModelsCoverViewStateFormatting() throws {
+        let projects = [
+            AppModel.ProjectItem(name: "active", path: "/tmp/active", status: "Ready", archived: false, packaged: false),
+            AppModel.ProjectItem(name: "archived", path: "/tmp/archived", status: "Archived", archived: true, packaged: false)
+        ]
+
+        let activeList = WorkspaceProjectListPresentation(
+            archived: false,
+            projects: projects,
+            language: "en"
+        )
+        XCTAssertEqual(activeList.title, "Projects")
+        XCTAssertEqual(activeList.visibleProjects.map(\.name), ["active"])
+        XCTAssertEqual(activeList.emptyTitle, "No projects")
+        XCTAssertTrue(activeList.allowsZipDrop)
+
+        let archivedList = WorkspaceProjectListPresentation(
+            archived: true,
+            projects: projects,
+            language: "zh"
+        )
+        XCTAssertEqual(archivedList.title, "归档项目")
+        XCTAssertEqual(archivedList.visibleProjects.map(\.name), ["archived"])
+        XCTAssertEqual(archivedList.emptyTitle, "暂无归档项目")
+        XCTAssertFalse(archivedList.allowsZipDrop)
+
+        XCTAssertEqual(ProjectTabPresentation(tab: FileEntry(name: "main.tron", path: "/tmp/main.tron", is_dir: false, is_tron: true)).iconName, "doc.richtext")
+        XCTAssertEqual(ProjectTabPresentation(tab: FileEntry(name: "notes.md", path: "/tmp/notes.md", is_dir: false, is_tron: false)).iconName, "doc.text")
+        XCTAssertEqual(ProjectTabPresentation(tab: FileEntry(name: "data.csv", path: "/tmp/data.csv", is_dir: false, is_tron: false)).iconName, "tablecells")
+
+        let status = ProjectStatusBarPresentation(status: "Saved main.tron", openedViewer: .csv)
+        XCTAssertEqual(status.statusText, "SAVED MAIN.TRON")
+        XCTAssertEqual(status.viewerText, "CSV")
+
+        XCTAssertEqual(CatalogActionPresentation.title(for: .installIntoHermes, language: "en"), "Install into Hermes")
+        XCTAssertEqual(CatalogActionPresentation.title(for: .installIntoScripTron, language: "zh"), "安装到 ScripTron")
+        XCTAssertEqual(CatalogActionPresentation.title(for: .remove, language: "en"), "Remove")
+        XCTAssertEqual(CatalogActionPresentation.title(for: .update, language: "zh"), "更新")
+
+        XCTAssertEqual(FileIconPresentation.iconName(path: "/tmp/src/main.rs"), "shippingbox")
+        XCTAssertEqual(FileIconPresentation.iconName(path: "/tmp/app.swift"), "swift")
+        XCTAssertEqual(FileIconPresentation.iconName(path: "/tmp/archive.zip"), "archivebox")
+        XCTAssertEqual(FileIconPresentation.iconName(path: "/tmp/folder", isDirectory: true), "folder")
+        XCTAssertEqual(FileIconPresentation.iconName(path: "/tmp/folder", isDirectory: true, isExpanded: true), "folder.fill")
+
+        XCTAssertEqual(RegistryItemPresentation(kind: "model").iconName, "cpu")
+        XCTAssertEqual(RegistryItemPresentation(kind: "software").iconName, "app.connected.to.app.below.fill")
+        XCTAssertEqual(RegistryItemPresentation(kind: "tool").iconName, "terminal")
+        XCTAssertEqual(TronhubEntryPresentation(kind: "skill").iconName, "sparkles")
+        XCTAssertEqual(TronhubEntryPresentation(kind: "model").iconName, "cpu")
+        XCTAssertEqual(TronhubEntryPresentation(kind: "cli").iconName, "terminal")
+
+        let file = FileEntry(name: "main.tron", path: "/tmp/main.tron", is_dir: false, is_tron: true)
+        let selectedRow = FileTreeRowPresentation(
+            file: file,
+            depth: 2,
+            selectedPath: "/tmp/main.tron",
+            openedPath: nil,
+            expandedPaths: [],
+            childCount: 0,
+            dropHoverPath: nil,
+            draggedPath: nil
+        )
+        XCTAssertTrue(selectedRow.selected)
+        XCTAssertEqual(selectedRow.iconName, "doc.richtext")
+        XCTAssertEqual(selectedRow.leadingPadding, 36)
+        XCTAssertEqual(selectedRow.backgroundState, .selected)
+        XCTAssertEqual(selectedRow.opacity, 1)
+
+        let folder = FileEntry(name: "Sources", path: "/tmp/Sources", is_dir: true, is_tron: false)
+        let dropRow = FileTreeRowPresentation(
+            file: folder,
+            depth: 0,
+            selectedPath: nil,
+            openedPath: nil,
+            expandedPaths: ["/tmp/Sources"],
+            childCount: 3,
+            dropHoverPath: "/tmp/Sources",
+            draggedPath: "/tmp/Sources"
+        )
+        XCTAssertTrue(dropRow.expanded)
+        XCTAssertTrue(dropRow.showsChildren)
+        XCTAssertEqual(dropRow.chevronIcon, "chevron.down")
+        XCTAssertEqual(dropRow.iconName, "folder.fill")
+        XCTAssertEqual(dropRow.backgroundState, .dropTargeted)
+        XCTAssertEqual(dropRow.opacity, 0.72)
+
+        XCTAssertEqual(DocumentBlockRowPresentation(kind: .markdownLine, selected: false, hovering: false).controlTopPadding, 3)
+        XCTAssertEqual(DocumentBlockRowPresentation(kind: .heading(2), selected: true, hovering: false).controlTopPadding, 16)
+        XCTAssertEqual(DocumentBlockRowPresentation(kind: .run, selected: false, hovering: true).indicatorState, .hovered)
+        XCTAssertEqual(DocumentBlockRowPresentation(kind: .quote, selected: true, hovering: true).indicatorState, .selected)
+
+        let packagedProject = AppModel.ProjectItem(name: "deck", path: "/tmp/deck", status: "ready", archived: false, packaged: true)
+        let projectRow = ProjectRowPresentation(project: packagedProject, archived: false)
+        XCTAssertEqual(projectRow.iconName, "shippingbox.fill")
+        XCTAssertEqual(projectRow.statusText, "READY")
+        XCTAssertEqual(projectRow.actionsWidth, 342)
+        XCTAssertFalse(projectRow.disablesOpenAndPackage)
+
+        let archivedRow = ProjectRowPresentation(project: archivedList.visibleProjects[0], archived: true)
+        XCTAssertEqual(archivedRow.iconName, "folder")
+        XCTAssertEqual(archivedRow.actionsWidth, 218)
+        XCTAssertTrue(archivedRow.disablesOpenAndPackage)
+
+        let catalogItem = ExtensionCatalogItem(
+            name: "browser",
+            kind: .skill,
+            source: .hermesHub,
+            category: "Research",
+            trustLevel: "official",
+            description: "Browser automation",
+            installed: false,
+            wrapsExternalCLI: true,
+            hermesCompatible: true,
+            tags: ["official", "browser", "automation", "web", "cli", "extra"],
+            icon: "globe"
+        )
+        let catalogCard = ExtensionCatalogCardPresentation(item: catalogItem, language: "zh")
+        XCTAssertEqual(catalogCard.iconName, "globe")
+        XCTAssertEqual(catalogCard.visibleBadges, ["Hermes Official / Hub", "Research", "official", "browser", "automation"])
+        XCTAssertEqual(catalogCard.actionTitle, "安装到 Hermes")
+
+        let activeTab = EditorTabButtonPresentation(tab: file, active: true, dirty: true, hovering: false)
+        XCTAssertEqual(activeTab.iconName, "doc.richtext")
+        XCTAssertTrue(activeTab.showsDirtyIndicator)
+        XCTAssertEqual(activeTab.textEmphasis, .active)
+        XCTAssertEqual(activeTab.backgroundState, .active)
+        XCTAssertFalse(activeTab.closeButtonHighlighted)
+        XCTAssertEqual(activeTab.underlineHeight, 2)
+
+        let hoveredTab = EditorTabButtonPresentation(tab: FileEntry(name: "notes.md", path: "/tmp/notes.md", is_dir: false, is_tron: false), active: false, dirty: false, hovering: true)
+        XCTAssertEqual(hoveredTab.iconName, "doc.text")
+        XCTAssertFalse(hoveredTab.showsDirtyIndicator)
+        XCTAssertEqual(hoveredTab.textEmphasis, .inactive)
+        XCTAssertEqual(hoveredTab.backgroundState, .hovered)
+        XCTAssertTrue(hoveredTab.closeButtonHighlighted)
+        XCTAssertEqual(hoveredTab.underlineHeight, 0)
+
+        let dirtyToolbar = DocumentToolbarPresentation(isDirty: true, selectedCount: 3, language: "zh")
+        XCTAssertEqual(dirtyToolbar.statusText, "未保存")
+        XCTAssertEqual(dirtyToolbar.selectedText, "已选择 3 个")
+        XCTAssertTrue(dirtyToolbar.showsBulkDelete)
+        XCTAssertEqual(dirtyToolbar.statusState, .dirty)
+
+        let cleanToolbar = DocumentToolbarPresentation(isDirty: false, selectedCount: 0, language: "en")
+        XCTAssertEqual(cleanToolbar.statusText, "Saved")
+        XCTAssertNil(cleanToolbar.selectedText)
+        XCTAssertFalse(cleanToolbar.showsBulkDelete)
+        XCTAssertEqual(cleanToolbar.statusState, .saved)
+    }
+
+    func testDocumentBlockPresentationModelsFormatMarkdownListsAndTables() throws {
+        let h1 = MarkdownLinePresentation(text: "# Title")
+        XCTAssertEqual(h1.kind, .heading1)
+        XCTAssertEqual(h1.fontSize, 30)
+        XCTAssertEqual(h1.fontWeight, .bold)
+        XCTAssertFalse(h1.hasInlineContainer)
+        XCTAssertEqual(h1.verticalPadding, 3)
+
+        let quote = MarkdownLinePresentation(text: "> quoted")
+        XCTAssertEqual(quote.kind, .quote)
+        XCTAssertEqual(quote.fontSize, 15)
+        XCTAssertEqual(quote.fontDesign, .serif)
+        XCTAssertEqual(quote.foregroundState, .secondary)
+        XCTAssertEqual(quote.backgroundState, .quote)
+        XCTAssertEqual(quote.horizontalPadding, 8)
+
+        let code = MarkdownLinePresentation(text: "`code`")
+        XCTAssertEqual(code.kind, .code)
+        XCTAssertEqual(code.fontSize, 14)
+        XCTAssertEqual(code.fontDesign, .monospaced)
+        XCTAssertEqual(code.foregroundState, .accent)
+        XCTAssertEqual(code.backgroundState, .code)
+        XCTAssertEqual(code.horizontalPadding, 8)
+
+        let empty = MarkdownLinePresentation(text: "   ")
+        XCTAssertEqual(empty.kind, .plain)
+        XCTAssertEqual(empty.verticalPadding, 6)
+        XCTAssertTrue(MarkdownLinePresentation(text: "---").isDivider)
+
+        let list = ListBlockPresentation(text: " First item \n\nSecond item", ordered: true)
+        XCTAssertEqual(list.items, ["First item", "Second item"])
+        XCTAssertEqual(list.marker(at: 0), "1.")
+        XCTAssertEqual(list.marker(at: 1), "2.")
+        XCTAssertEqual(list.deleteButtonOpacity, 0.75)
+        XCTAssertEqual(list.markdown(afterSetting: "Updated", at: 0), "Updated\nSecond item")
+        XCTAssertEqual(list.markdown(afterAddingItemAfter: 0), "First item\n\nSecond item")
+        XCTAssertEqual(list.markdown(afterDeleting: 1), "First item")
+
+        let singletonList = ListBlockPresentation(text: "", ordered: false)
+        XCTAssertEqual(singletonList.items, [""])
+        XCTAssertEqual(singletonList.marker(at: 0), "•")
+        XCTAssertEqual(singletonList.deleteButtonOpacity, 0)
+        XCTAssertEqual(singletonList.markdown(afterDeleting: 0), "")
+
+        let table = MarkdownTablePresentation(markdown: """
+        | Name | Score |
+        | --- | --- |
+        | Ada | 10 |
+        """)
+        XCTAssertEqual(table.headers, ["Name", "Score"])
+        XCTAssertEqual(table.rows, [["Ada", "10"]])
+        XCTAssertEqual(table.markdown, """
+        | Name | Score |
+        | --- | --- |
+        | Ada | 10 |
+        """)
+        XCTAssertEqual(table.addedRow().rows, [["Ada", "10"], ["", ""]])
+        XCTAssertEqual(table.addedColumn().headers, ["Name", "Score", "Column 3"])
+        XCTAssertEqual(table.deletedColumn(0).headers, ["Score"])
+        XCTAssertEqual(table.deletedRow(0).rows, [["", ""]])
+
+        let checklist = ChecklistBlockPresentation(text: """
+        [x] Draft outline
+        [ ] Build deck
+        Plain task
+        """)
+        XCTAssertEqual(checklist.items, [
+            ChecklistItemPresentation(checked: true, text: "Draft outline"),
+            ChecklistItemPresentation(checked: false, text: "Build deck"),
+            ChecklistItemPresentation(checked: false, text: "Plain task")
+        ])
+        XCTAssertEqual(checklist.markdown, """
+        [x] Draft outline
+        [ ] Build deck
+        [ ] Plain task
+        """)
+        XCTAssertEqual(checklist.deleteButtonOpacity, 0.75)
+        XCTAssertEqual(checklist.markdown(afterSettingText: "Ship deck", at: 1), """
+        [x] Draft outline
+        [ ] Ship deck
+        [ ] Plain task
+        """)
+        XCTAssertEqual(checklist.markdown(afterSettingChecked: true, at: 1), """
+        [x] Draft outline
+        [x] Build deck
+        [ ] Plain task
+        """)
+        XCTAssertEqual(checklist.markdown(afterAddingItemAfter: 0), """
+        [x] Draft outline
+        [ ] 
+        [ ] Build deck
+        [ ] Plain task
+        """)
+        XCTAssertEqual(checklist.markdown(afterDeleting: 2), """
+        [x] Draft outline
+        [ ] Build deck
+        """)
+
+        let emptyChecklist = ChecklistBlockPresentation(text: "")
+        XCTAssertEqual(emptyChecklist.items, [ChecklistItemPresentation(checked: false, text: "")])
+        XCTAssertEqual(emptyChecklist.deleteButtonOpacity, 0)
+
+        XCTAssertEqual(RunInlineMentionPresentation(text: "Use @browser").query, "browser")
+        XCTAssertNil(RunInlineMentionPresentation(text: "Use @browser now").query)
+        XCTAssertEqual(
+            RunInlineMentionPresentation(text: "Use @browser").textAfterInserting(label: "browser", moduleName: "search"),
+            "Use @browser#search "
+        )
+        XCTAssertEqual(
+            RunInlineMentionPresentation(text: "Use ").textAfterInserting(label: "deck", moduleName: nil),
+            "Use @deck "
+        )
+
+        let skill = MentionItem(id: "skill:browser", label: "browser", kind: "skill", path: "", detail: "Web agent", installed: true, modules: [])
+        let cloud = MentionItem(id: "cloud:slides", label: "slides", kind: "cloud", path: "", detail: "Cloud skill", installed: false, modules: [])
+        let fileMention = MentionItem(id: "file:brief", label: "brief.tron", kind: "tron", path: "/tmp/brief.tron", detail: "Brief", installed: true, modules: [])
+        let function = MentionItem(
+            id: "function:build_deck",
+            label: "build_deck",
+            kind: "function",
+            path: "/tmp/brief.tron",
+            detail: "Run block",
+            installed: true,
+            modules: [MentionModule(name: "build_deck", kind: "executable", injection: "function_call")]
+        )
+        let search = MentionSearchResult(tools: [skill], files: [fileMention], cloud_suggestions: [cloud])
+
+        let projectSkills = MentionPickerPresentation(tab: "Skills", search: search, functionMentions: [function])
+        XCTAssertEqual(projectSkills.items.map(\.label), ["browser", "slides"])
+        XCTAssertEqual(projectSkills.iconName(for: skill), "sparkles")
+        XCTAssertEqual(projectSkills.iconName(for: cloud), "icloud")
+        XCTAssertNil(projectSkills.moduleForSelection(skill))
+
+        let projectFunctions = MentionPickerPresentation(tab: "Functions", search: search, functionMentions: [function])
+        XCTAssertEqual(projectFunctions.items.map(\.label), ["build_deck"])
+        XCTAssertEqual(projectFunctions.iconName(for: function), "function")
+        XCTAssertEqual(projectFunctions.moduleForSelection(function)?.name, "build_deck")
+
+        let workspaceTools = MentionPickerPresentation(tab: "Tools", search: search, functionMentions: [])
+        XCTAssertEqual(workspaceTools.items.map(\.label), ["browser", "slides"])
+        XCTAssertTrue(workspaceTools.showsCloudBadge(for: cloud))
+        XCTAssertFalse(workspaceTools.showsCloudBadge(for: skill))
+        XCTAssertEqual(MentionPickerPresentation(tab: "Files", search: search, functionMentions: []).items.map(\.label), ["brief.tron"])
+        XCTAssertEqual(MentionPickerPresentation(tab: "Files", search: search, functionMentions: []).iconName(for: fileMention), "doc.richtext")
+
+        XCTAssertEqual(NewFileKindPresentation(kind: .tron).fileExtension(customExtension: ""), "tron")
+        XCTAssertEqual(NewFileKindPresentation(kind: .word).fileExtension(customExtension: ""), "docx")
+        XCTAssertEqual(NewFileKindPresentation(kind: .excel).placeholder, "metrics_table")
+        XCTAssertEqual(NewFileKindPresentation(kind: .other).fileExtension(customExtension: " json "), "json")
+        XCTAssertTrue(NewFileKindPresentation(kind: .other).requiresCustomExtension)
+        XCTAssertFalse(NewFileKindPresentation(kind: .tron).requiresCustomExtension)
+        XCTAssertEqual(NewFileKindPresentation(kind: .tron).extensionBadgeText(customExtension: ""), ".tron")
+        XCTAssertNil(NewFileKindPresentation(kind: .other).extensionBadgeText(customExtension: "md"))
+
+        let csv = CSVViewerPresentation(content: "name,score\nAda,10\nBob")
+        XCTAssertEqual(csv.rows, [["name", "score"], ["Ada", "10"], ["Bob"]])
+        XCTAssertEqual(csv.maxColumnCount, 2)
+        XCTAssertEqual(csv.cellText(row: 2, column: 1), "")
+        XCTAssertTrue(csv.isHeader(row: 0))
+        XCTAssertFalse(csv.isHeader(row: 1))
+
+        let quotedCSV = CSVViewerPresentation(content: "\"name, full\",score\n\"Ada, Lovelace\",10")
+        XCTAssertEqual(quotedCSV.rows[0], ["name, full", "score"])
+        XCTAssertEqual(quotedCSV.rows[1], ["Ada, Lovelace", "10"])
+
+        let unsupported = UnsupportedViewerPresentation(fileName: "archive.bin", language: "zh")
+        XCTAssertEqual(unsupported.title, "archive.bin 暂无可用预览")
+        XCTAssertEqual(unsupported.subtitle, "安装轻量 viewer 插件以支持这种文件类型。")
+
+        let settings = ProjectSettingsPresentation(
+            activeProjectPath: "/tmp/project",
+            language: "en"
+        )
+        XCTAssertEqual(settings.lines(" one \n\n two "), ["one", "two"])
+        XCTAssertEqual(settings.runtimeRows.map(\.title), ["Project Path", "Execution", "Storage", "CLI Safety"])
+        XCTAssertEqual(settings.runtimeRows.first?.value, "/tmp/project")
+        XCTAssertEqual(ProjectSettingsPresentation(activeProjectPath: nil, language: "zh").runtimeRows.first?.value, "暂无项目")
+    }
+
     func testApprovalRequestBuildsModalViewModelWithExpectedActions() throws {
         let event = try HermesEventMapper.map(raw: [
             "type": "approval.request",
@@ -239,6 +598,75 @@ final class HermesMigrationTests: XCTestCase {
         XCTAssertEqual(sections.pendingApprovals.map(\.approvalID), ["approval-1"])
     }
 
+    func testRunEventPresentationFormatsContentAndLogRows() throws {
+        let textEvent = RunEvent.local(type: "message_delta", content: "Drafting outline")
+        XCTAssertEqual(RunEventPresentation.displayText(for: textEvent), "Drafting outline")
+
+        let objectEvent = RunEvent(
+            type: "message_delta",
+            content: AnyCodable(["summary": "Done"]),
+            tool: nil,
+            args: nil,
+            output: nil,
+            success: nil,
+            step_id: nil,
+            attempt: nil,
+            decision: nil,
+            reason: nil,
+            error: nil,
+            skills: nil
+        )
+        XCTAssertTrue(RunEventPresentation.displayText(for: objectEvent)?.contains("\"summary\" : \"Done\"") == true)
+
+        let toolCall = RunEvent(
+            type: "tool_call",
+            content: nil,
+            tool: "write_file",
+            args: AnyCodable(["path": "deck.md"]),
+            output: nil,
+            success: nil,
+            step_id: nil,
+            attempt: nil,
+            decision: nil,
+            reason: nil,
+            error: nil,
+            skills: nil
+        )
+        XCTAssertEqual(RunEventPresentation.logText(for: toolCall), "TOOL write_file\nARGS {\"path\":\"deck.md\"}")
+
+        let failedTool = RunEvent(
+            type: "tool_result",
+            content: AnyCodable("fallback"),
+            tool: "write_file",
+            args: nil,
+            output: nil,
+            success: false,
+            step_id: nil,
+            attempt: nil,
+            decision: nil,
+            reason: nil,
+            error: nil,
+            skills: nil
+        )
+        XCTAssertEqual(RunEventPresentation.logText(for: failedTool), "FAILED write_file\nfallback")
+
+        let retry = RunEvent(
+            type: "step_retried",
+            content: nil,
+            tool: nil,
+            args: nil,
+            output: nil,
+            success: nil,
+            step_id: "s1",
+            attempt: 2,
+            decision: "retry",
+            reason: "transient",
+            error: nil,
+            skills: nil
+        )
+        XCTAssertEqual(RunEventPresentation.logText(for: retry), "STEP RETRY s1 attempt 2\nretry: transient")
+    }
+
     func testHermesModelManagementStateReplacesProviderCardsWithGatewayStatus() {
         let state = HermesModelManagementState(
             installStatus: .installed(version: "0.4.0"),
@@ -287,6 +715,7 @@ final class HermesMigrationTests: XCTestCase {
             "hermes_secret_respond",
             "hermes_command_catalog",
             "hermes_command_dispatch",
+            "sync_hermes_workspace_bridge",
             "hermes_skills_browse",
             "hermes_skills_search",
             "hermes_skills_install",

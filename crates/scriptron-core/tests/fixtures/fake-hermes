@@ -10,9 +10,40 @@ if [[ "${1:-}" == "--version" ]]; then
   exit 0
 fi
 
+if [[ "${1:-}" == "status" ]]; then
+  printf 'Hermes Agent Status\nModel: fake/model\nProvider: fake\nOpenAI Codex: logged in\nClaude Code: available\n'
+  exit 0
+fi
+
+if [[ "${1:-}" == "doctor" ]]; then
+  printf 'Hermes Doctor\nPython Environment: OK\nCommand Installation: OK\n'
+  exit 0
+fi
+
+if [[ "${1:-}" == "auth" && "${2:-}" == "status" ]]; then
+  printf '%s: logged in\n' "${3:-unknown}"
+  exit 0
+fi
+
+if [[ "${1:-}" == "chat" && "${2:-}" == "-q" ]]; then
+  printf 'Fake Hermes response for ScripTron run.\n'
+  exit 0
+fi
+
 if [[ "${1:-}" == "skills" && "${2:-}" == "browse" ]]; then
   cat <<'JSON'
 [
+  {
+    "name": "claude-code",
+    "description": "Install and run Claude Code from Hermes.",
+    "category": "Coding",
+    "trust_level": "official",
+    "installed": false,
+    "install_ref": "claude-code",
+    "wraps_external_cli": true,
+    "tags": ["official", "cli", "coding"],
+    "icon": "terminal"
+  },
   {
     "name": "github-pr-review",
     "description": "Review pull requests and summarize actionable changes.",

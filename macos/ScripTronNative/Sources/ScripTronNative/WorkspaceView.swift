@@ -200,28 +200,32 @@ private struct ProjectsListView: View {
     let archived: Bool
     @State private var zipDropTargeted = false
 
-    private var visibleProjects: [AppModel.ProjectItem] {
-        model.projects.filter { $0.archived == archived }
+    private var presentation: WorkspaceProjectListPresentation {
+        WorkspaceProjectListPresentation(
+            archived: archived,
+            projects: model.projects,
+            language: model.appLanguage
+        )
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 22) {
             VStack(alignment: .leading, spacing: 8) {
-                Text(archived ? model.tr("Archived Projects", "归档项目") : model.tr("Projects", "项目"))
+                Text(presentation.title)
                     .font(.system(size: 38, weight: .bold))
-                Text(archived ? model.tr("Restore or delete archived local projects.", "恢复或删除已归档的本地项目。") : model.tr("Manage, package, open, archive, or delete local automation projects.", "管理、打包、打开、归档或删除本地自动化项目。"))
+                Text(presentation.subtitle)
                     .font(.system(size: 17))
                     .foregroundStyle(.secondary)
             }
 
             VStack(spacing: 0) {
                 ProjectTableHeader(archived: archived)
-                ForEach(visibleProjects) { project in
+                ForEach(presentation.visibleProjects) { project in
                     ProjectRow(project: project, archived: archived)
                     Divider()
                 }
-                if visibleProjects.isEmpty {
-                    EmptyListView(title: archived ? model.tr("No archived projects", "暂无归档项目") : model.tr("No projects", "暂无项目"), subtitle: model.tr("Create a project from the sidebar.", "从侧边栏创建一个项目。"))
+                if presentation.visibleProjects.isEmpty {
+                    EmptyListView(title: presentation.emptyTitle, subtitle: presentation.emptySubtitle)
                 }
             }
             .background(.white, in: RoundedRectangle(cornerRadius: 12))
@@ -231,7 +235,7 @@ private struct ProjectsListView: View {
             )
             .shadow(color: zipDropTargeted ? Color.primaryGreen.opacity(0.14) : Color.clear, radius: 18, y: 10)
             .onDrop(of: [UTType.fileURL.identifier], isTargeted: $zipDropTargeted) { providers in
-                guard !archived else { return false }
+                guard presentation.allowsZipDrop else { return false }
                 return model.importProjectZipDrops(providers)
             }
         }
@@ -264,9 +268,13 @@ private struct ProjectRow: View {
     let archived: Bool
     @State private var hovering = false
 
+    private var presentation: ProjectRowPresentation {
+        ProjectRowPresentation(project: project, archived: archived)
+    }
+
     var body: some View {
         HStack(spacing: 16) {
-            Image(systemName: project.packaged ? "shippingbox.fill" : "folder")
+            Image(systemName: presentation.iconName)
                 .foregroundStyle(Color.primaryGreen)
                 .frame(width: 28)
             VStack(alignment: .leading, spacing: 2) {
@@ -275,14 +283,14 @@ private struct ProjectRow: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            Text(project.status.uppercased())
+            Text(presentation.statusText)
                 .font(.system(size: 10, weight: .bold))
                 .frame(width: 82, alignment: .leading)
                 .foregroundStyle(Color.primaryGreen)
 
             HStack(spacing: 8) {
-                WorkspaceActionButton(model.tr("Open", "打开"), icon: "arrow.up.right.square", disabled: archived) { model.openProject(project) }
-                WorkspaceActionButton(model.tr("Package", "打包"), icon: "shippingbox", disabled: archived) { model.packageProject(project) }
+                WorkspaceActionButton(model.tr("Open", "打开"), icon: "arrow.up.right.square", disabled: presentation.disablesOpenAndPackage) { model.openProject(project) }
+                WorkspaceActionButton(model.tr("Package", "打包"), icon: "shippingbox", disabled: presentation.disablesOpenAndPackage) { model.packageProject(project) }
                 if archived {
                     WorkspaceActionButton(model.tr("Restore", "恢复"), icon: "arrow.uturn.backward") { model.restoreProject(project) }
                 } else {
@@ -290,7 +298,7 @@ private struct ProjectRow: View {
                 }
                 WorkspaceActionButton(model.tr("Delete", "删除"), icon: "trash", role: .destructive) { model.deleteProject(project) }
             }
-            .frame(width: archived ? 218 : 342, alignment: .leading)
+            .frame(width: CGFloat(presentation.actionsWidth), alignment: .leading)
         }
         .padding(.horizontal, 18)
         .frame(height: 64)
@@ -359,23 +367,32 @@ private struct WorkspaceActionButton: View {
 
 private struct CLIMarketView: View {
     @EnvironmentObject private var model: AppModel
-    @State private var source: ExtensionCatalogSource = .tronHub
+    @State private var source: ExtensionCatalogSource = .hermesHub
     @State private var category = "All"
     @State private var query = ""
+    @State private var page = 1
 
     private var catalog: ExtensionCatalogState {
-        ExtensionCatalogState(items: ExtensionCatalogFixtures.hermesCLIItems + model.tronhubClis.map(ExtensionCatalogFixtures.fromTronhub))
+        ExtensionCatalogState(items: model.cliMarketCatalogItems)
     }
 
     private var visibleItems: [ExtensionCatalogItem] {
-        catalog.filtered(source: source, category: category, query: query)
+        catalog.page(source: source, category: category, query: query, page: page)
+    }
+
+    private var totalItems: Int {
+        catalog.filtered(source: source, category: category, query: query).count
+    }
+
+    private var totalPages: Int {
+        catalog.pageCount(source: source, category: category, query: query)
     }
 
     var body: some View {
         ManagementPage(title: model.tr("CLI Market", "CLI 市场"), subtitle: model.tr("Browse Hermes-managed CLI wrappers and TronHub workspace CLIs.", "浏览 Hermes 管理的 CLI wrapper 与 TronHub 工作区 CLI。")) {
             HStack {
                 ManagementPill(model.tr("Source", "来源"), value: source.rawValue)
-                ManagementPill(model.tr("Available", "可用"), value: "\(visibleItems.count)")
+                ManagementPill(model.tr("Available", "可用"), value: "\(totalItems)")
                 Spacer()
                 Button { model.syncTronhub() } label: { Label(model.tr("Sync TronHub", "同步 TronHub"), systemImage: "arrow.triangle.2.circlepath") }
                     .buttonStyle(ManagementButtonStyle(primary: true))
@@ -386,6 +403,7 @@ private struct CLIMarketView: View {
                 query: $query,
                 categories: ["All"] + catalog.categories
             )
+            ExtensionCatalogPager(page: $page, totalPages: totalPages)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 16)], spacing: 16) {
                 ForEach(visibleItems) { item in
                     ExtensionCatalogCard(item: item) {
@@ -394,7 +412,10 @@ private struct CLIMarketView: View {
                 }
             }
         }
-        .onAppear { model.loadWorkspaceManagementData() }
+        .onAppear { model.ensureWorkspaceManagementDataLoaded() }
+        .onChange(of: source) { _ in page = 1 }
+        .onChange(of: category) { _ in page = 1 }
+        .onChange(of: query) { _ in page = 1 }
     }
 
     private func handleCatalogAction(_ item: ExtensionCatalogItem) {
@@ -454,7 +475,7 @@ private struct CLIManagementView: View {
 
             RegistryListView(items: toolCLIs, activeModel: model.activeConfig?.model, onRemove: model.removeCLI, onActivateModel: model.activateModelCLI)
         }
-        .onAppear { model.loadWorkspaceManagementData() }
+        .onAppear { model.ensureWorkspaceManagementDataLoaded() }
     }
 }
 
@@ -463,20 +484,29 @@ private struct SkillMarketView: View {
     @State private var source: ExtensionCatalogSource = .hermesHub
     @State private var category = "All"
     @State private var query = ""
+    @State private var page = 1
 
     private var catalog: ExtensionCatalogState {
         ExtensionCatalogState(items: model.skillMarketCatalogItems)
     }
 
     private var visibleItems: [ExtensionCatalogItem] {
-        catalog.filtered(source: source, category: category, query: query)
+        catalog.page(source: source, category: category, query: query, page: page)
+    }
+
+    private var totalItems: Int {
+        catalog.filtered(source: source, category: category, query: query).count
+    }
+
+    private var totalPages: Int {
+        catalog.pageCount(source: source, category: category, query: query)
     }
 
     var body: some View {
         ManagementPage(title: model.tr("Skill Market", "Skill 市场"), subtitle: model.tr("Browse Hermes Official / Hub skills and TronHub workspace extensions.", "浏览 Hermes Official / Hub skills 与 TronHub 工作区扩展。")) {
             HStack {
                 ManagementPill(model.tr("Source", "来源"), value: source.rawValue)
-                ManagementPill(model.tr("Available", "可用"), value: "\(visibleItems.count)")
+                ManagementPill(model.tr("Available", "可用"), value: "\(totalItems)")
                 Spacer()
                 Button { model.syncTronhub() } label: { Label(model.tr("Sync TronHub", "同步 TronHub"), systemImage: "arrow.triangle.2.circlepath") }
                     .buttonStyle(ManagementButtonStyle(primary: true))
@@ -487,6 +517,7 @@ private struct SkillMarketView: View {
                 query: $query,
                 categories: ["All"] + catalog.categories
             )
+            ExtensionCatalogPager(page: $page, totalPages: totalPages)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 16)], spacing: 16) {
                 ForEach(visibleItems) { item in
                     ExtensionCatalogCard(item: item) {
@@ -495,7 +526,10 @@ private struct SkillMarketView: View {
                 }
             }
         }
-        .onAppear { model.loadWorkspaceManagementData() }
+        .onAppear { model.ensureWorkspaceManagementDataLoaded() }
+        .onChange(of: source) { _ in page = 1 }
+        .onChange(of: category) { _ in page = 1 }
+        .onChange(of: query) { _ in page = 1 }
     }
 
     private func handleCatalogAction(_ item: ExtensionCatalogItem) {
@@ -526,7 +560,7 @@ private struct SkillManagementView: View {
                 }
             }
         }
-        .onAppear { model.loadWorkspaceManagementData() }
+        .onAppear { model.ensureWorkspaceManagementDataLoaded() }
     }
 }
 
@@ -570,10 +604,14 @@ private struct ExtensionCatalogCard: View {
     let item: ExtensionCatalogItem
     let action: () -> Void
 
+    private var presentation: ExtensionCatalogCardPresentation {
+        ExtensionCatalogCardPresentation(item: item, language: model.appLanguage)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: item.kind == .skill ? "sparkles" : "terminal")
+                Image(systemName: presentation.iconName)
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(Color.primaryGreen)
                     .frame(width: 42, height: 42)
@@ -590,27 +628,40 @@ private struct ExtensionCatalogCard: View {
                 Spacer()
             }
             HStack(spacing: 6) {
-                CatalogBadge(item.source.rawValue)
-                CatalogBadge(item.category)
-                CatalogBadge(item.trustLevel)
-                if item.wrapsExternalCLI {
-                    CatalogBadge("CLI")
+                ForEach(presentation.visibleBadges, id: \.self) { badge in
+                    CatalogBadge(badge)
                 }
             }
-            Button(actionTitle) { action() }
+            Button(presentation.actionTitle) { action() }
                 .buttonStyle(ManagementButtonStyle(primary: true))
         }
         .padding(16)
         .background(.white.opacity(0.82), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.hairline.opacity(0.7), lineWidth: 1))
     }
+}
 
-    private var actionTitle: String {
-        switch item.primaryAction {
-        case .installIntoHermes: return model.tr("Install into Hermes", "安装到 Hermes")
-        case .installIntoScripTron: return model.tr("Install into ScripTron", "安装到 ScripTron")
-        case .remove: return model.tr("Remove", "移除")
-        case .update: return model.tr("Update", "更新")
+private struct ExtensionCatalogPager: View {
+    @Binding var page: Int
+    let totalPages: Int
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Spacer()
+            Button { page = max(1, page - 1) } label: {
+                Image(systemName: "chevron.left")
+            }
+            .buttonStyle(ManagementButtonStyle())
+            .disabled(page <= 1)
+            Text("\(page) / \(max(1, totalPages))")
+                .font(.system(size: 12, weight: .bold))
+                .foregroundStyle(Color.appSecondaryText)
+                .frame(minWidth: 52)
+            Button { page = min(totalPages, page + 1) } label: {
+                Image(systemName: "chevron.right")
+            }
+            .buttonStyle(ManagementButtonStyle())
+            .disabled(page >= totalPages)
         }
     }
 }
@@ -675,29 +726,56 @@ struct ModelManagementView: View {
                 }
 
                 HStack(spacing: 10) {
-                    Button { model.status = model.tr("Hermes install check will run through the gateway.", "Hermes 安装检查将通过网关执行。") } label: {
+                    Button { model.checkHermesInstall() } label: {
                         Label(model.tr("Check Install", "检查安装"), systemImage: "stethoscope")
                     }
                     .buttonStyle(ManagementButtonStyle(primary: true))
-                    Button { model.status = model.tr("Hermes login opens through the gateway.", "Hermes 登录将通过网关打开。") } label: {
-                        Label(model.tr("Login", "登录"), systemImage: "person.crop.circle.badge.checkmark")
+                    Button { model.checkHermesAuth(provider: "codex") } label: {
+                        Label(model.tr("Codex", "Codex"), systemImage: "terminal")
                     }
                     .buttonStyle(ManagementButtonStyle())
-                    Button { model.status = model.tr("Model selection is delegated to Hermes.", "模型选择已委托给 Hermes。") } label: {
-                        Label(model.tr("Select Model", "选择模型"), systemImage: "slider.horizontal.3")
+                    Button { model.checkHermesAuth(provider: "anthropic") } label: {
+                        Label(model.tr("Claude Code", "Claude Code"), systemImage: "curlybraces")
                     }
                     .buttonStyle(ManagementButtonStyle())
-                    Button { model.status = model.tr("Hermes doctor/log output is not connected yet.", "Hermes doctor/log 输出尚未接入。") } label: {
+                    Button { model.checkHermesAuth(provider: "openai") } label: {
+                        Label(model.tr("API", "API"), systemImage: "key")
+                    }
+                    .buttonStyle(ManagementButtonStyle())
+                    Button { model.runHermesDoctor() } label: {
                         Label(model.tr("Doctor", "诊断"), systemImage: "waveform.path.ecg")
                     }
                     .buttonStyle(ManagementButtonStyle())
+                    Button { model.openHermesModelInstructions() } label: {
+                        Label(model.tr("Setup", "配置"), systemImage: "slider.horizontal.3")
+                    }
+                    .buttonStyle(ManagementButtonStyle())
+                }
+
+                if let output = model.hermesCommandOutput {
+                    VStack(alignment: .leading, spacing: 8) {
+                        HStack {
+                            Text(output.success ? model.tr("Hermes Output", "Hermes 输出") : model.tr("Hermes Error", "Hermes 错误"))
+                                .font(.system(size: 12, weight: .bold))
+                            Spacer()
+                            Text("exit \(output.exit_code)")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(Color.appSecondaryText)
+                        }
+                        Text(output.output)
+                            .font(.system(size: 11, design: .monospaced))
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(10)
+                            .background(Color.surfaceSoft, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    }
                 }
             }
             .padding(18)
             .background(.white.opacity(0.82), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.hairline.opacity(0.7), lineWidth: 1))
         }
-        .onAppear { model.loadWorkspaceManagementData() }
+        .onAppear { model.ensureWorkspaceManagementDataLoaded() }
     }
 }
 
@@ -966,11 +1044,7 @@ private struct RegistryRow: View {
     }
 
     private var icon: String {
-        switch item.kind {
-        case "model": return "cpu"
-        case "software": return "app.connected.to.app.below.fill"
-        default: return "terminal"
-        }
+        RegistryItemPresentation(kind: item.kind).iconName
     }
 }
 
@@ -1014,11 +1088,7 @@ private struct TronhubCard: View {
     }
 
     private var icon: String {
-        switch entry.kind {
-        case "skill": return "sparkles"
-        case "model": return "cpu"
-        default: return "terminal"
-        }
+        TronhubEntryPresentation(kind: entry.kind).iconName
     }
 }
 
@@ -1232,6 +1302,14 @@ private struct MentionPicker: View {
     @Binding var moduleItem: MentionItem?
     let onSelect: (MentionItem, MentionModule?) -> Void
 
+    private var presentation: MentionPickerPresentation {
+        MentionPickerPresentation(
+            tab: tab,
+            search: model.mentionSearch,
+            functionMentions: model.functionMentions
+        )
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             VStack(spacing: 8) {
@@ -1243,20 +1321,20 @@ private struct MentionPicker: View {
 
                 ScrollView {
                     VStack(spacing: 6) {
-                        ForEach(items) { item in
+                        ForEach(presentation.items) { item in
                             Button {
                                 moduleItem = nil
                                 onSelect(item, nil)
                             } label: {
                                 HStack(spacing: 8) {
-                                    Image(systemName: icon(for: item))
+                                    Image(systemName: presentation.iconName(for: item))
                                         .frame(width: 18)
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(item.label).font(.system(size: 12, weight: .bold)).lineLimit(1)
                                         Text(item.detail).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
                                     }
                                     Spacer()
-                                    if !item.installed {
+                                    if presentation.showsCloudBadge(for: item) {
                                         Text(model.tr("CLOUD", "云端")).font(.system(size: 8, weight: .bold)).foregroundStyle(Color.primaryGreen)
                                     }
                                 }
@@ -1272,22 +1350,6 @@ private struct MentionPicker: View {
             .padding(10)
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 14).stroke(.white.opacity(0.32), lineWidth: 1))
-        }
-    }
-
-    private var items: [MentionItem] {
-        if tab == "Tools" {
-            return model.mentionSearch.tools + model.mentionSearch.cloud_suggestions
-        }
-        return model.mentionSearch.files
-    }
-
-    private func icon(for item: MentionItem) -> String {
-        switch item.kind {
-        case "tool", "software", "model": return "terminal"
-        case "tron": return "doc.richtext"
-        case "cloud": return "icloud"
-        default: return "doc"
         }
     }
 }

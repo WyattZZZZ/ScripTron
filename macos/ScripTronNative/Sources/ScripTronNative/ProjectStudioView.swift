@@ -196,10 +196,10 @@ struct ProjectStudioView: View {
         HStack(spacing: 18) {
             Text("SCRIPTRON")
             Text("RUST FFI")
-            Text(model.status.uppercased())
+            Text(statusPresentation.statusText)
             Spacer()
             Text("UTF-8")
-            Text(model.openedFile?.viewer.rawValue.uppercased() ?? ".TRON")
+            Text(statusPresentation.viewerText)
         }
         .font(.system(size: 11, weight: .bold))
         .foregroundStyle(.secondary)
@@ -207,6 +207,13 @@ struct ProjectStudioView: View {
         .frame(height: 26)
         .background(.white.opacity(0.78))
         .overlay(Rectangle().frame(height: 1).foregroundStyle(Color.hairline.opacity(0.55)), alignment: .top)
+    }
+
+    private var statusPresentation: ProjectStatusBarPresentation {
+        ProjectStatusBarPresentation(
+            status: model.status,
+            openedViewer: model.openedFile?.viewer
+        )
     }
 }
 
@@ -218,15 +225,19 @@ private struct EditorTabButton: View {
     let requestClose: (FileEntry) -> Void
     @State private var hovering = false
 
+    private var presentation: EditorTabButtonPresentation {
+        EditorTabButtonPresentation(tab: tab, active: active, dirty: dirty, hovering: hovering)
+    }
+
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: iconName)
+            Image(systemName: presentation.iconName)
                 .font(.system(size: 12))
             Text(tab.name)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: 150)
-            if dirty {
+            if presentation.showsDirtyIndicator {
                 Circle()
                     .frame(width: 7, height: 7)
                     .foregroundStyle(.orange)
@@ -237,23 +248,23 @@ private struct EditorTabButton: View {
                 Image(systemName: "xmark")
                     .font(.system(size: 10, weight: .bold))
                     .frame(width: 18, height: 18)
-                    .background(hovering ? Color.hairline.opacity(0.45) : Color.clear, in: Circle())
+                    .background(presentation.closeButtonHighlighted ? Color.hairline.opacity(0.45) : Color.clear, in: Circle())
             }
             .buttonStyle(.plain)
         }
-        .font(.system(size: 12, weight: active ? .bold : .medium))
-        .foregroundStyle(active ? Color.appText : Color.appSecondaryText)
+        .font(.system(size: 12, weight: tabFontWeight))
+        .foregroundStyle(tabForeground)
         .padding(.leading, 12)
         .padding(.trailing, 6)
         .frame(height: 34)
         .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .background(
-            active ? .white : (hovering ? Color.primaryGreen.opacity(0.06) : Color.clear),
+            tabBackground,
             in: RoundedRectangle(cornerRadius: 10, style: .continuous)
         )
         .overlay(alignment: .bottom) {
             Rectangle()
-                .frame(height: active ? 2 : 0)
+                .frame(height: CGFloat(presentation.underlineHeight))
                 .foregroundStyle(Color.primaryGreen)
                 .padding(.horizontal, 10)
         }
@@ -265,10 +276,23 @@ private struct EditorTabButton: View {
         .animation(.easeOut(duration: 0.12), value: active)
     }
 
-    private var iconName: String {
-        if tab.is_tron { return "doc.richtext" }
-        let ext = URL(fileURLWithPath: tab.path).pathExtension.lowercased()
-        return fileIconName(for: ext)
+    private var tabFontWeight: Font.Weight {
+        presentation.textEmphasis == .active ? .bold : .medium
+    }
+
+    private var tabForeground: Color {
+        presentation.textEmphasis == .active ? Color.appText : Color.appSecondaryText
+    }
+
+    private var tabBackground: Color {
+        switch presentation.backgroundState {
+        case .active:
+            return .white
+        case .hovered:
+            return Color.primaryGreen.opacity(0.06)
+        case .clear:
+            return Color.clear
+        }
     }
 }
 
@@ -313,16 +337,30 @@ private struct FileTreeNode: View {
     let depth: Int
     let rename: (FileEntry) -> Void
 
-    private var selected: Bool { model.selectedFile?.path == file.path || model.openedFile?.path == file.path }
-    private var expanded: Bool { model.expandedFolders.contains(file.path) }
     private var children: [FileEntry] { model.folderChildren[file.path] ?? [] }
-    private var dropTargeted: Bool { file.is_dir && model.dropHoverFolderPath == file.path }
-    private var draggedSource: Bool { model.draggedFilePath == file.path }
+    private var presentation: FileTreeRowPresentation {
+        FileTreeRowPresentation(
+            file: file,
+            depth: depth,
+            selectedPath: model.selectedFile?.path,
+            openedPath: model.openedFile?.path,
+            expandedPaths: model.expandedFolders,
+            childCount: children.count,
+            dropHoverPath: model.dropHoverFolderPath,
+            draggedPath: model.draggedFilePath
+        )
+    }
+    private var selected: Bool { presentation.selected }
+    private var expanded: Bool { presentation.expanded }
+    private var dropTargeted: Bool { presentation.dropTargeted }
+    private var draggedSource: Bool { presentation.draggedSource }
     private var rowBackground: Color {
-        if dropTargeted { return Color.primaryGreen.opacity(0.20) }
-        if draggedSource { return Color.primaryGreen.opacity(0.06) }
-        if selected { return Color.primaryGreen.opacity(0.10) }
-        return Color.clear
+        switch presentation.backgroundState {
+        case .dropTargeted: return Color.primaryGreen.opacity(0.20)
+        case .draggedSource: return Color.primaryGreen.opacity(0.06)
+        case .selected: return Color.primaryGreen.opacity(0.10)
+        case .clear: return Color.clear
+        }
     }
 
     var body: some View {
@@ -330,7 +368,7 @@ private struct FileTreeNode: View {
             row
                 .padding(.horizontal, 8)
 
-            if file.is_dir && expanded {
+            if presentation.showsChildren {
                 ForEach(children) { child in
                     FileTreeNode(file: child, depth: depth + 1, rename: rename)
                         .environmentObject(model)
@@ -342,7 +380,7 @@ private struct FileTreeNode: View {
     private var row: some View {
         HStack(spacing: 7) {
             if file.is_dir {
-                Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                Image(systemName: presentation.chevronIcon ?? "chevron.right")
                     .font(.system(size: 9, weight: .bold))
                     .frame(width: 10)
             } else {
@@ -365,7 +403,7 @@ private struct FileTreeNode: View {
         }
         .font(.system(size: 12))
         .foregroundStyle(selected ? Color.primaryGreen : Color.appText)
-        .padding(.leading, CGFloat(depth) * 14 + 8)
+        .padding(.leading, CGFloat(presentation.leadingPadding))
         .padding(.trailing, 10)
         .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
         .contentShape(Rectangle())
@@ -374,7 +412,7 @@ private struct FileTreeNode: View {
             RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(dropTargeted ? Color.primaryGreen.opacity(0.38) : Color.clear, lineWidth: 1)
         )
-        .opacity(draggedSource ? 0.72 : 1)
+        .opacity(presentation.opacity)
         .onTapGesture { model.openFile(file) }
         .contextMenu {
             Button { model.openFile(file) } label: {
@@ -403,31 +441,7 @@ private struct FileTreeNode: View {
     }
 
     private var iconName: String {
-        if file.is_dir { return expanded ? "folder.fill" : "folder" }
-        if file.is_tron { return "doc.richtext" }
-        let ext = URL(fileURLWithPath: file.path).pathExtension.lowercased()
-        return fileIconName(for: ext)
-    }
-}
-
-private func fileIconName(for ext: String) -> String {
-    switch ext {
-    case "swift": return "swift"
-    case "rs": return "shippingbox"
-    case "py": return "curlybraces"
-    case "js", "jsx", "ts", "tsx": return "chevron.left.forwardslash.chevron.right"
-    case "html", "css": return "globe"
-    case "json", "toml", "yaml", "yml", "xml": return "curlybraces.square"
-    case "md", "markdown": return "text.alignleft"
-    case "csv": return "tablecells"
-    case "xls", "xlsx", "numbers": return "tablecells.badge.ellipsis"
-    case "doc", "docx", "pages": return "doc.text"
-    case "pdf": return "doc.text.magnifyingglass"
-    case "png", "jpg", "jpeg", "gif", "webp", "heic", "svg": return "photo"
-    case "zip", "tar", "gz", "7z": return "archivebox"
-    case "sh", "bash", "zsh": return "terminal"
-    case "txt", "log": return "doc.plaintext"
-    default: return "doc"
+        presentation.iconName
     }
 }
 
@@ -740,7 +754,9 @@ private struct CSVViewer: View {
     @EnvironmentObject private var model: AppModel
     let file: AppModel.OpenedFile
 
-    private var rows: [[String]] { CSVParser.parse(file.content) }
+    private var presentation: CSVViewerPresentation {
+        CSVViewerPresentation(content: file.content)
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -749,15 +765,15 @@ private struct CSVViewer: View {
             }
             ScrollView([.horizontal, .vertical]) {
                 Grid(horizontalSpacing: 0, verticalSpacing: 0) {
-                    ForEach(rows.indices, id: \.self) { row in
+                    ForEach(presentation.rows.indices, id: \.self) { row in
                         GridRow {
-                            ForEach((0..<maxColumnCount), id: \.self) { column in
-                                Text(column < rows[row].count ? rows[row][column] : "")
-                                    .font(.system(size: 12, weight: row == 0 ? .bold : .regular))
+                            ForEach((0..<presentation.maxColumnCount), id: \.self) { column in
+                                Text(presentation.cellText(row: row, column: column))
+                                    .font(.system(size: 12, weight: presentation.isHeader(row: row) ? .bold : .regular))
                                     .foregroundStyle(Color.appText)
                                     .padding(.horizontal, 10)
                                     .frame(minWidth: 130, minHeight: 34, alignment: .leading)
-                                    .background(row == 0 ? Color.surfaceSoft : .white)
+                                    .background(presentation.isHeader(row: row) ? Color.surfaceSoft : .white)
                                     .overlay(Rectangle().stroke(Color.hairline.opacity(0.45), lineWidth: 0.5))
                             }
                         }
@@ -769,23 +785,23 @@ private struct CSVViewer: View {
         }
         .background(.white)
     }
-
-    private var maxColumnCount: Int {
-        max(rows.map(\.count).max() ?? 1, 1)
-    }
 }
 
 private struct UnsupportedViewer: View {
+    @EnvironmentObject private var model: AppModel
     let file: AppModel.OpenedFile
+    private var presentation: UnsupportedViewerPresentation {
+        UnsupportedViewerPresentation(fileName: file.name, language: model.appLanguage)
+    }
 
     var body: some View {
         VStack(spacing: 12) {
             Image(systemName: "questionmark.app")
                 .font(.system(size: 42))
                 .foregroundStyle(Color.primaryGreen)
-            Text("No viewer for \(file.name)")
+            Text(presentation.title)
                 .font(.system(size: 22, weight: .bold))
-            Text("Install a lightweight viewer plugin to support this file type.")
+            Text(presentation.subtitle)
                 .foregroundStyle(Color.appSecondaryText)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -840,39 +856,6 @@ private enum SyntaxHighlighter {
     }
 }
 
-private enum CSVParser {
-    static func parse(_ source: String) -> [[String]] {
-        var rows: [[String]] = []
-        var row: [String] = []
-        var field = ""
-        var inQuotes = false
-        var iterator = source.makeIterator()
-
-        while let character = iterator.next() {
-            if character == "\"" {
-                inQuotes.toggle()
-            } else if character == "," && !inQuotes {
-                row.append(field)
-                field = ""
-            } else if character == "\n" && !inQuotes {
-                row.append(field)
-                rows.append(row)
-                row = []
-                field = ""
-            } else if character != "\r" {
-                field.append(character)
-            }
-        }
-
-        if !field.isEmpty || !row.isEmpty {
-            row.append(field)
-            rows.append(row)
-        }
-
-        return rows.isEmpty ? [[""]] : rows
-    }
-}
-
 private struct NotebookEditorView: View {
     @EnvironmentObject private var model: AppModel
 
@@ -906,15 +889,15 @@ private struct NotebookEditorView: View {
         HStack(spacing: 10) {
             Text(model.tr("Document", "文档"))
                 .font(.system(size: 20, weight: .bold))
-            Text(model.isDirty ? model.tr("Unsaved", "未保存") : model.tr("Saved", "已保存"))
+            Text(documentToolbarPresentation.statusText)
                 .font(.system(size: 11, weight: .bold))
-                .foregroundStyle(model.isDirty ? .orange : Color.primaryGreen)
+                .foregroundStyle(documentToolbarPresentation.statusState == .dirty ? .orange : Color.primaryGreen)
             Spacer()
             Text(model.tr("Hover a line and use the left + menu", "悬停到一行，使用左侧 + 菜单"))
                 .font(.system(size: 12, weight: .medium))
                 .foregroundStyle(.secondary)
-            if !model.selectedDocumentBlockIDs.isEmpty {
-                Text(model.tr("\(model.selectedDocumentBlockIDs.count) selected", "已选择 \(model.selectedDocumentBlockIDs.count) 个"))
+            if documentToolbarPresentation.showsBulkDelete {
+                Text(documentToolbarPresentation.selectedText ?? "")
                     .font(.system(size: 11, weight: .bold))
                     .foregroundStyle(Color.primaryGreen)
                 Button(role: .destructive) {
@@ -929,6 +912,14 @@ private struct NotebookEditorView: View {
         }
         .padding(.bottom, 14)
     }
+
+    private var documentToolbarPresentation: DocumentToolbarPresentation {
+        DocumentToolbarPresentation(
+            isDirty: model.isDirty,
+            selectedCount: model.selectedDocumentBlockIDs.count,
+            language: model.appLanguage
+        )
+    }
 }
 
 private struct DocumentFlowRow: View {
@@ -939,6 +930,25 @@ private struct DocumentFlowRow: View {
 
     private var selected: Bool {
         model.selectedDocumentBlockIDs.contains(block.id)
+    }
+
+    private var presentation: DocumentBlockRowPresentation {
+        DocumentBlockRowPresentation(kind: block.kind, selected: selected, hovering: hovering)
+    }
+
+    private var indicatorFill: Color {
+        switch presentation.indicatorState {
+        case .selected:
+            return Color.primaryGreen
+        case .hovered:
+            return Color.primaryGreen.opacity(0.25)
+        case .idle:
+            return Color.hairline.opacity(0.45)
+        }
+    }
+
+    private var indicatorStrokeOpacity: Double {
+        presentation.indicatorState == .selected ? 0.35 : 0
     }
 
     private var content: Binding<String> {
@@ -959,19 +969,19 @@ private struct DocumentFlowRow: View {
                 )
             } label: {
                 RoundedRectangle(cornerRadius: 5, style: .continuous)
-                    .fill(selected ? Color.primaryGreen : (hovering ? Color.primaryGreen.opacity(0.25) : Color.hairline.opacity(0.45)))
+                    .fill(indicatorFill)
                     .frame(width: 10, height: 28)
                     .overlay(
                         RoundedRectangle(cornerRadius: 5, style: .continuous)
-                            .stroke(Color.primaryGreen.opacity(selected ? 0.35 : 0), lineWidth: 1)
+                            .stroke(Color.primaryGreen.opacity(indicatorStrokeOpacity), lineWidth: 1)
                     )
             }
             .buttonStyle(.plain)
-            .padding(.top, block.kind == .markdownLine ? 3 : 16)
+            .padding(.top, CGFloat(presentation.controlTopPadding))
 
             BlockPlusMenu(block: block, visible: hovering)
                 .environmentObject(model)
-                .padding(.top, block.kind == .markdownLine ? 4 : 16)
+                .padding(.top, CGFloat(presentation.plusMenuTopPadding))
 
             HStack(alignment: .top, spacing: 0) {
                 switch block.kind {
@@ -1161,6 +1171,9 @@ private struct MarkdownLineView: View {
     let blockIndex: Int
 
     private var isFocusTarget: Bool { model.focusedBlockID == block.id }
+    private var presentation: MarkdownLinePresentation {
+        MarkdownLinePresentation(text: text)
+    }
 
     private func moveUp() {
         guard blockIndex > 0 else { return }
@@ -1173,7 +1186,7 @@ private struct MarkdownLineView: View {
     }
 
     var body: some View {
-        if text.trimmingCharacters(in: .whitespaces) == "---" {
+        if presentation.isDivider {
             HStack(spacing: 10) {
                 Rectangle().frame(height: 1).foregroundStyle(Color.hairline)
                 TextField("", text: $text)
@@ -1190,8 +1203,8 @@ private struct MarkdownLineView: View {
             BackspaceAwareTextField(
                 placeholder: model.tr("Markdown", "Markdown"),
                 text: $text,
-                font: nsFontForLine(text),
-                textColor: NSColor(foregroundForLine(text)),
+                font: nsFontForLine,
+                textColor: NSColor(foregroundForLine),
                 isFocusTarget: isFocusTarget,
                 onSubmit: { model.continueMarkdownLine(after: block) },
                 onEmptyBackspace: { model.deleteEmptyMarkdownBlockBefore(block) },
@@ -1199,49 +1212,46 @@ private struct MarkdownLineView: View {
                 onMoveDown: moveDown,
                 onDidFocus: { model.focusedBlockID = nil }
             )
-                .padding(.vertical, lineVerticalPadding(text))
-                .padding(.horizontal, horizontalPadding(text))
-                .background(backgroundForLine(text), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .padding(.vertical, CGFloat(presentation.verticalPadding))
+                .padding(.horizontal, CGFloat(presentation.horizontalPadding))
+                .background(backgroundForLine, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
-    private func fontForLine(_ line: String) -> Font {
-        if line.hasPrefix("# ") { return .system(size: 30, weight: .bold) }
-        if line.hasPrefix("## ") { return .system(size: 23, weight: .bold) }
-        if line.hasPrefix("### ") { return .system(size: 18, weight: .bold) }
-        if line.hasPrefix("> ") { return .system(size: 15, design: .serif).italic() }
-        if line.hasPrefix("`") { return .system(size: 14, design: .monospaced) }
-        return .system(size: 15)
+    private var nsFontForLine: NSFont {
+        switch presentation.fontDesign {
+        case .monospaced:
+            return .monospacedSystemFont(ofSize: presentation.fontSize, weight: nsFontWeight)
+        case .standard, .serif:
+            return .systemFont(ofSize: presentation.fontSize, weight: nsFontWeight)
+        }
     }
 
-    private func nsFontForLine(_ line: String) -> NSFont {
-        if line.hasPrefix("# ") { return .systemFont(ofSize: 30, weight: .bold) }
-        if line.hasPrefix("## ") { return .systemFont(ofSize: 23, weight: .bold) }
-        if line.hasPrefix("### ") { return .systemFont(ofSize: 18, weight: .bold) }
-        if line.hasPrefix("> ") { return .systemFont(ofSize: 15) }
-        if line.hasPrefix("`") { return .monospacedSystemFont(ofSize: 14, weight: .regular) }
-        return .systemFont(ofSize: 15)
+    private var nsFontWeight: NSFont.Weight {
+        presentation.fontWeight == .bold ? .bold : .regular
     }
 
-    private func foregroundForLine(_ line: String) -> Color {
-        if line.hasPrefix("> ") { return Color.appSecondaryText }
-        if line.hasPrefix("`") { return Color.primaryGreen }
-        return Color.appText
+    private var foregroundForLine: Color {
+        switch presentation.foregroundState {
+        case .primary:
+            return Color.appText
+        case .secondary:
+            return Color.appSecondaryText
+        case .accent:
+            return Color.primaryGreen
+        }
     }
 
-    private func backgroundForLine(_ line: String) -> Color {
-        if line.hasPrefix("`") { return Color.primaryGreen.opacity(0.07) }
-        if line.hasPrefix("> ") { return Color.surfaceSoft.opacity(0.72) }
-        return Color.clear
-    }
-
-    private func horizontalPadding(_ line: String) -> CGFloat {
-        line.hasPrefix("`") || line.hasPrefix("> ") ? 8 : 0
-    }
-
-    private func lineVerticalPadding(_ line: String) -> CGFloat {
-        line.trimmingCharacters(in: .whitespaces).isEmpty ? 6 : 3
+    private var backgroundForLine: Color {
+        switch presentation.backgroundState {
+        case .code:
+            return Color.primaryGreen.opacity(0.07)
+        case .quote:
+            return Color.surfaceSoft.opacity(0.72)
+        case .clear:
+            return Color.clear
+        }
     }
 }
 
@@ -1278,11 +1288,15 @@ private struct ListBlockView: View {
     @State private var lines: [String] = []
     @FocusState private var focusedIndex: Int?
 
+    private var presentation: ListBlockPresentation {
+        ListBlockPresentation(text: text, ordered: ordered)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             ForEach(lines.indices, id: \.self) { index in
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(ordered ? "\(index + 1)." : "•")
+                    Text(presentation.marker(at: index))
                         .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(Color.primaryGreen)
                         .frame(width: 24, alignment: .trailing)
@@ -1304,7 +1318,7 @@ private struct ListBlockView: View {
                     }
                     .buttonStyle(.plain)
                     .foregroundStyle(.secondary)
-                    .opacity(lines.count > 1 ? 0.75 : 0)
+                    .opacity(presentation.deleteButtonOpacity)
                 }
                 .padding(.vertical, 2)
             }
@@ -1320,10 +1334,7 @@ private struct ListBlockView: View {
     }
 
     private func syncFromText() {
-        let parsed = text.components(separatedBy: .newlines)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
-        lines = parsed.isEmpty ? [""] : parsed
+        lines = presentation.items
     }
 
     private func commit() {
@@ -1382,8 +1393,12 @@ private struct CodeBlockView: View {
 private struct ChecklistBlockView: View {
     @EnvironmentObject private var model: AppModel
     @Binding var text: String
-    @State private var items: [ChecklistItem] = []
+    @State private var items: [ChecklistItemPresentation] = []
     @FocusState private var focusedIndex: Int?
+
+    private var presentation: ChecklistBlockPresentation {
+        ChecklistBlockPresentation(text: text)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -1410,9 +1425,9 @@ private struct ChecklistBlockView: View {
                     .focused($focusedIndex, equals: index)
                     .onSubmit { addItem(after: index) }
                     Button { deleteItem(index) } label: { Image(systemName: "minus.circle") }
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.secondary)
-                        .opacity(items.count > 1 ? 0.75 : 0)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
+                    .opacity(presentation.deleteButtonOpacity)
                 }
             }
         }
@@ -1424,27 +1439,17 @@ private struct ChecklistBlockView: View {
     }
 
     private var markdown: String {
-        items.map { "\($0.checked ? "[x]" : "[ ]") \($0.text)" }.joined(separator: "\n")
+        ChecklistBlockPresentation.markdown(from: items)
     }
 
     private func syncFromText() {
-        let parsed = text.components(separatedBy: .newlines).map { line in
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-            if trimmed.hasPrefix("[x]") || trimmed.hasPrefix("[X]") {
-                return ChecklistItem(checked: true, text: String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces))
-            }
-            if trimmed.hasPrefix("[ ]") {
-                return ChecklistItem(checked: false, text: String(trimmed.dropFirst(3)).trimmingCharacters(in: .whitespaces))
-            }
-            return ChecklistItem(checked: false, text: trimmed)
-        }.filter { !$0.text.isEmpty }
-        items = parsed.isEmpty ? [ChecklistItem(checked: false, text: "")] : parsed
+        items = presentation.items
     }
 
     private func commit() { text = markdown }
 
     private func addItem(after index: Int) {
-        items.insert(ChecklistItem(checked: false, text: ""), at: min(index + 1, items.count))
+        items.insert(ChecklistItemPresentation(checked: false, text: ""), at: min(index + 1, items.count))
         commit()
         DispatchQueue.main.async { focusedIndex = index + 1 }
     }
@@ -1454,11 +1459,6 @@ private struct ChecklistBlockView: View {
         items.remove(at: index)
         commit()
     }
-}
-
-private struct ChecklistItem {
-    var checked: Bool
-    var text: String
 }
 
 private struct DividerBlockView: View {
@@ -1610,7 +1610,7 @@ private struct TableBlockView: View {
     @Binding var markdown: String
 
     var body: some View {
-        EditableMarkdownTable(table: MarkdownTable(markdown: markdown)) { updated in
+        EditableMarkdownTable(table: MarkdownTablePresentation(markdown: markdown)) { updated in
             markdown = updated.markdown
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1618,45 +1618,12 @@ private struct TableBlockView: View {
     }
 }
 
-private struct MarkdownTable {
-    var headers: [String]
-    var rows: [[String]]
-
-    init(markdown: String) {
-        let lines = markdown.components(separatedBy: .newlines).filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
-        headers = Self.cells(from: lines.first ?? "| Column 1 | Column 2 | Column 3 |")
-        rows = lines.dropFirst(2).map { Self.cells(from: $0) }
-        if rows.isEmpty {
-            rows = [Array(repeating: "", count: max(headers.count, 1))]
-        }
-    }
-
-    var markdown: String {
-        let safeHeaders = headers.isEmpty ? ["Column 1"] : headers
-        let separator = "| " + safeHeaders.map { _ in "---" }.joined(separator: " | ") + " |"
-        let header = "| " + safeHeaders.joined(separator: " | ") + " |"
-        let body = rows.map { row in
-            let padded = row + Array(repeating: "", count: max(0, safeHeaders.count - row.count))
-            return "| " + padded.prefix(safeHeaders.count).joined(separator: " | ") + " |"
-        }.joined(separator: "\n")
-        return [header, separator, body].filter { !$0.isEmpty }.joined(separator: "\n")
-    }
-
-    private static func cells(from line: String) -> [String] {
-        line
-            .trimmingCharacters(in: .whitespaces)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "|"))
-            .components(separatedBy: "|")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-    }
-}
-
 private struct EditableMarkdownTable: View {
     @EnvironmentObject private var model: AppModel
-    @State private var table: MarkdownTable
-    let onChange: (MarkdownTable) -> Void
+    @State private var table: MarkdownTablePresentation
+    let onChange: (MarkdownTablePresentation) -> Void
 
-    init(table: MarkdownTable, onChange: @escaping (MarkdownTable) -> Void) {
+    init(table: MarkdownTablePresentation, onChange: @escaping (MarkdownTablePresentation) -> Void) {
         self._table = State(initialValue: table)
         self.onChange = onChange
     }
@@ -1683,7 +1650,7 @@ private struct EditableMarkdownTable: View {
                     ForEach(table.headers.indices, id: \.self) { column in
                         TableCellField(text: Binding(
                             get: { table.headers[column] },
-                            set: { table.headers[column] = $0; onChange(table) }
+                            set: { table = table.withHeader($0, at: column); onChange(table) }
                         ), header: true)
                     }
                 }
@@ -1691,10 +1658,9 @@ private struct EditableMarkdownTable: View {
                     GridRow {
                         ForEach(table.headers.indices, id: \.self) { column in
                             TableCellField(text: Binding(
-                                get: { column < table.rows[row].count ? table.rows[row][column] : "" },
-                                set: { value in
-                                    while table.rows[row].count <= column { table.rows[row].append("") }
-                                    table.rows[row][column] = value
+                            get: { column < table.rows[row].count ? table.rows[row][column] : "" },
+                            set: { value in
+                                    table = table.withCell(value, row: row, column: column)
                                     onChange(table)
                                 }
                             ), header: false)
@@ -1725,33 +1691,22 @@ private struct EditableMarkdownTable: View {
     }
 
     private func addRow() {
-        table.rows.append(Array(repeating: "", count: table.headers.count))
+        table = table.addedRow()
         onChange(table)
     }
 
     private func deleteRow(_ row: Int) {
-        guard table.rows.indices.contains(row) else { return }
-        table.rows.remove(at: row)
-        if table.rows.isEmpty {
-            table.rows.append(Array(repeating: "", count: table.headers.count))
-        }
+        table = table.deletedRow(row)
         onChange(table)
     }
 
     private func addColumn() {
-        table.headers.append("Column \(table.headers.count + 1)")
-        for row in table.rows.indices {
-            table.rows[row].append("")
-        }
+        table = table.addedColumn()
         onChange(table)
     }
 
     private func deleteColumn(_ column: Int) {
-        guard table.headers.indices.contains(column), table.headers.count > 1 else { return }
-        table.headers.remove(at: column)
-        for row in table.rows.indices where table.rows[row].indices.contains(column) {
-            table.rows[row].remove(at: column)
-        }
+        table = table.deletedColumn(column)
         onChange(table)
     }
 }
@@ -1836,10 +1791,7 @@ private struct RunInlineBlock: View {
     }
 
     private var mentionQuery: String? {
-        guard let at = text.lastIndex(of: "@") else { return nil }
-        let suffix = String(text[text.index(after: at)...])
-        if suffix.contains(where: { $0.isWhitespace }) { return nil }
-        return suffix
+        RunInlineMentionPresentation(text: text).query
     }
 
     private func updateMentionSearch() {
@@ -1852,12 +1804,7 @@ private struct RunInlineBlock: View {
 
     private func insertMention(_ item: MentionItem, _ module: MentionModule?) {
         model.selectMention(item, module: module)
-        let token = module.map { "@\(item.label)#\($0.name)" } ?? "@\(item.label)"
-        if let at = text.lastIndex(of: "@") {
-            text.replaceSubrange(at..<text.endIndex, with: token + " ")
-        } else {
-            text += token + " "
-        }
+        text = RunInlineMentionPresentation(text: text).textAfterInserting(label: item.label, moduleName: module?.name)
         moduleItem = nil
     }
 }
@@ -1962,7 +1909,7 @@ private struct RunEventsPanel: View {
                                             .foregroundStyle(Color.primaryGreen)
                                         Spacer()
                                     }
-                                    if let text = eventText(event) {
+                                    if let text = RunEventPresentation.displayText(for: event) {
                                         RunResponseMarkdownView(
                                             markdown: text,
                                             basePath: model.activeProjectPath ?? model.workspacePath
@@ -1982,7 +1929,7 @@ private struct RunEventsPanel: View {
                             .font(.system(size: 10, weight: .bold))
                             .foregroundStyle(Color.appSecondaryText)
                         ForEach(delegationEvents) { event in
-                            Text(eventText(event) ?? event.type)
+                            Text(RunEventPresentation.displayText(for: event) ?? event.type)
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(Color.appText)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1997,7 +1944,7 @@ private struct RunEventsPanel: View {
                             .font(.system(size: 10, weight: .bold))
                             .foregroundStyle(Color.appSecondaryText)
                         ForEach(approvalEvents) { event in
-                            Text(eventText(event) ?? event.type)
+                            Text(RunEventPresentation.displayText(for: event) ?? event.type)
                                 .font(.system(size: 11, weight: .semibold))
                                 .foregroundStyle(Color.appText)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -2010,7 +1957,7 @@ private struct RunEventsPanel: View {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 6) {
                             ForEach(logEvents) { event in
-                                Text(logText(event))
+                                Text(RunEventPresentation.logText(for: event))
                                     .font(.system(size: 11, design: .monospaced))
                                     .foregroundStyle(Color.appSecondaryText)
                                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -2024,54 +1971,6 @@ private struct RunEventsPanel: View {
             }
             .padding(.vertical, 12)
         }
-    }
-
-    private func eventText(_ event: RunEvent) -> String? {
-        if let value = event.content?.value {
-            if let string = value as? String { return string }
-            if !(value is NSNull),
-               let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted]),
-               let text = String(data: data, encoding: .utf8) {
-                return text
-            }
-        }
-        return nil
-    }
-
-    private func logText(_ event: RunEvent) -> String {
-        switch event.type {
-        case "plan":
-            return "PLAN\n\(eventText(event) ?? "")"
-        case "skill_selected":
-            return "SKILLS \(event.skills?.joined(separator: ", ") ?? "")"
-        case "tool_call":
-            return "TOOL \(event.tool ?? "")\nARGS \(jsonText(event.args?.value))"
-        case "tool_result":
-            return "\(event.success == false ? "FAILED" : "RESULT") \(event.tool ?? "")\n\(event.output ?? eventText(event) ?? "")"
-        case "step_started":
-            return "STEP START \(event.step_id ?? "") \(event.tool ?? "")\nARGS \(jsonText(event.args?.value))"
-        case "step_retried":
-            return "STEP RETRY \(event.step_id ?? "") attempt \(event.attempt ?? 0)\n\(event.decision ?? ""): \(event.reason ?? "")"
-        case "step_completed":
-            return "STEP DONE \(event.step_id ?? "") \(event.tool ?? "")\n\(event.output ?? "")"
-        case "step_failed":
-            return "STEP FAILED \(event.step_id ?? "") \(event.tool ?? "")\n\(event.error ?? "")"
-        case "thinking":
-            return "THINKING\n\(eventText(event) ?? "")"
-        case "error":
-            return "ERROR\n\(event.error ?? eventText(event) ?? "")"
-        default:
-            return "\(event.type)\n\(eventText(event) ?? "")"
-        }
-    }
-
-    private func jsonText(_ value: Any?) -> String {
-        guard let value, !(value is NSNull),
-              let data = try? JSONSerialization.data(withJSONObject: value, options: []),
-              let text = String(data: data, encoding: .utf8) else {
-            return "{}"
-        }
-        return text
     }
 }
 
@@ -2290,6 +2189,14 @@ private struct ProjectMentionPicker: View {
     @Binding var moduleItem: MentionItem?
     let onSelect: (MentionItem, MentionModule?) -> Void
 
+    private var presentation: MentionPickerPresentation {
+        MentionPickerPresentation(
+            tab: tab,
+            search: model.mentionSearch,
+            functionMentions: model.functionMentions
+        )
+    }
+
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             VStack(spacing: 8) {
@@ -2302,13 +2209,13 @@ private struct ProjectMentionPicker: View {
 
                 ScrollView {
                     VStack(spacing: 6) {
-                        ForEach(items) { item in
+                        ForEach(presentation.items) { item in
                             Button {
                                 moduleItem = nil
-                                onSelect(item, item.kind == "function" ? item.modules.first : nil)
+                                onSelect(item, presentation.moduleForSelection(item))
                             } label: {
                                 HStack(spacing: 8) {
-                                    Image(systemName: icon(for: item)).frame(width: 18)
+                                    Image(systemName: presentation.iconName(for: item)).frame(width: 18)
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(item.label).font(.system(size: 12, weight: .bold)).lineLimit(1)
                                         Text(item.detail).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
@@ -2328,25 +2235,6 @@ private struct ProjectMentionPicker: View {
         .padding(10)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(.white.opacity(0.32), lineWidth: 1))
-    }
-
-    private var items: [MentionItem] {
-        switch tab {
-        case "Skills": model.mentionSearch.tools + model.mentionSearch.cloud_suggestions
-        case "Functions": model.functionMentions
-        default: model.mentionSearch.files
-        }
-    }
-
-    private func icon(for item: MentionItem) -> String {
-        switch item.kind {
-        case "skill": return "sparkles"
-        case "function": return "function"
-        case "tool", "software", "model": return "terminal"
-        case "tron": return "doc.richtext"
-        case "cloud": return "icloud"
-        default: return "doc"
-        }
     }
 }
 
@@ -2404,39 +2292,16 @@ private struct EmptyNotebookState: View {
 }
 
 private struct NewScriptSheet: View {
-    private enum NewFileKind: String, CaseIterable, Identifiable {
-        case tron = "Tron"
-        case word = "Word"
-        case excel = "Excel"
-        case other = "Other"
-
-        var id: String { rawValue }
-
-        var fileExtension: String {
-            switch self {
-            case .tron: "tron"
-            case .word: "docx"
-            case .excel: "xlsx"
-            case .other: ""
-            }
-        }
-
-        var placeholder: String {
-            switch self {
-            case .tron: "customer_onboarding"
-            case .word: "project_brief"
-            case .excel: "metrics_table"
-            case .other: "notes"
-            }
-        }
-    }
-
     @EnvironmentObject private var model: AppModel
     @Binding var isPresented: Bool
     @State private var scriptName = ""
     @State private var fileKind: NewFileKind = .tron
     @State private var customExtension = ""
     @FocusState private var nameFocused: Bool
+
+    private var fileKindPresentation: NewFileKindPresentation {
+        NewFileKindPresentation(kind: fileKind)
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
@@ -2449,17 +2314,17 @@ private struct NewScriptSheet: View {
             }
             .pickerStyle(.segmented)
 
-            TextField(fileKind.placeholder, text: $scriptName)
+            TextField(fileKindPresentation.placeholder, text: $scriptName)
                 .textFieldStyle(.roundedBorder)
                 .focused($nameFocused)
                 .onSubmit(createScript)
 
-            if fileKind == .other {
+            if fileKindPresentation.requiresCustomExtension {
                 TextField(model.tr("custom extension, for example: json", "自定义后缀，例如 json"), text: $customExtension)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit(createScript)
-            } else {
-                Text(".\(fileKind.fileExtension)")
+            } else if let badge = fileKindPresentation.extensionBadgeText(customExtension: customExtension) {
+                Text(badge)
                     .font(.system(size: 12, weight: .bold))
                     .foregroundStyle(Color.primaryGreen)
                     .padding(.horizontal, 10)
@@ -2487,7 +2352,7 @@ private struct NewScriptSheet: View {
     }
 
     private func createScript() {
-        let fileExtension = fileKind == .other ? customExtension : fileKind.fileExtension
+        let fileExtension = fileKindPresentation.fileExtension(customExtension: customExtension)
         model.createFile(named: scriptName, fileExtension: fileExtension)
         isPresented = false
     }
@@ -2584,6 +2449,12 @@ private struct ProjectSettingsPanel: View {
     @State private var projectFormatRules = ""
     @State private var projectConstraints = ""
     @State private var selectedSection = "Memory"
+    private var presentation: ProjectSettingsPresentation {
+        ProjectSettingsPresentation(
+            activeProjectPath: model.activeProjectPath,
+            language: model.appLanguage
+        )
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -2651,10 +2522,9 @@ private struct ProjectSettingsPanel: View {
 
     private var runtimeSettings: some View {
         VStack(alignment: .leading, spacing: 0) {
-            SettingsRow(title: model.tr("Project Path", "项目路径"), value: model.activeProjectPath ?? model.tr("No project", "暂无项目"))
-            SettingsRow(title: model.tr("Execution", "执行"), value: "Rust FFI + Local scriptron CLI")
-            SettingsRow(title: model.tr("Storage", "存储"), value: ".tron files, .troner.json, .register")
-            SettingsRow(title: model.tr("CLI Safety", "CLI 安全"), value: model.tr("Writes limited to ~/Documents or SCRIPTRON_PROJECT", "写入限制在 ~/Documents 或 SCRIPTRON_PROJECT"))
+            ForEach(presentation.runtimeRows, id: \.title) { row in
+                SettingsRow(title: row.title, value: row.value)
+            }
             Spacer()
         }
     }
@@ -2672,19 +2542,15 @@ private struct ProjectSettingsPanel: View {
         guard var memory = model.memorySnapshot?.global_memory else { return }
         memory.user_name_preference = globalUserName
         memory.agent_style_preference = globalStyle
-        memory.execution_rules = lines(globalRules)
+        memory.execution_rules = presentation.lines(globalRules)
         model.saveGlobalMemory(memory)
     }
 
     private func saveProjectMemory() {
         guard var memory = model.memorySnapshot?.project_memory else { return }
-        memory.format_rules = lines(projectFormatRules)
-        memory.task_constraints = lines(projectConstraints)
+        memory.format_rules = presentation.lines(projectFormatRules)
+        memory.task_constraints = presentation.lines(projectConstraints)
         model.saveProjectMemory(memory)
-    }
-
-    private func lines(_ text: String) -> [String] {
-        text.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
     }
 }
 

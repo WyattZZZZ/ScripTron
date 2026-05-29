@@ -204,6 +204,22 @@ async fn dispatch(request: RpcRequest) -> Result<Value, String> {
         "hermes_status" => {
             serde_json::to_value(core.hermes_status().await?).map_err(|e| e.to_string())
         }
+        "hermes_status_report" => {
+            serde_json::to_value(core.hermes_status_report().await?).map_err(|e| e.to_string())
+        }
+        "hermes_doctor" => {
+            serde_json::to_value(core.hermes_doctor().await?).map_err(|e| e.to_string())
+        }
+        "hermes_auth_status" => {
+            let provider = required_string(&request.params, "provider")?;
+            serde_json::to_value(core.hermes_auth_status(provider).await?)
+                .map_err(|e| e.to_string())
+        }
+        "hermes_provider_link_status" => {
+            let provider = required_string(&request.params, "provider")?;
+            serde_json::to_value(core.hermes_provider_link_status(provider).await?)
+                .map_err(|e| e.to_string())
+        }
         "hermes_skills_browse" => {
             serde_json::to_value(core.hermes_skills_browse().await?).map_err(|e| e.to_string())
         }
@@ -214,6 +230,10 @@ async fn dispatch(request: RpcRequest) -> Result<Value, String> {
         "hermes_skills_install" => {
             let install_ref = required_string(&request.params, "install_ref")?;
             core.hermes_skills_install(install_ref).await?;
+            Ok(json!(null))
+        }
+        "sync_hermes_workspace_bridge" => {
+            core.sync_hermes_workspace_bridge().await?;
             Ok(json!(null))
         }
         "get_active_config" => {
@@ -382,8 +402,14 @@ mod tests {
     use std::{
         fs,
         path::{Path, PathBuf},
+        sync::{Mutex, OnceLock},
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
 
     fn fixture_path(name: &str) -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -407,6 +433,7 @@ mod tests {
 
     #[test]
     fn dispatch_exposes_stage2_hermes_skill_methods() {
+        let _guard = env_lock().lock().expect("lock env");
         let home = unique_temp_home("stage2-hermes-skills");
         fs::create_dir_all(&home).expect("create temp home");
         let command_log = home.join("fake-hermes-commands.log");
@@ -421,8 +448,19 @@ mod tests {
                 params: json!({}),
             }))
             .expect("browse dispatch");
-        assert_eq!(browsed[0]["name"], "github-pr-review");
+        let browsed_names = browsed
+            .as_array()
+            .expect("array")
+            .iter()
+            .map(|item| item["name"].as_str().expect("name"))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            browsed_names,
+            vec!["claude-code", "github-pr-review", "research-brief"]
+        );
         assert_eq!(browsed[0]["source"], "Hermes Official / Hub");
+        assert_eq!(browsed[0]["tags"], json!(["official", "cli", "coding"]));
+        assert_eq!(browsed[0]["icon"], "terminal");
 
         let searched = rt
             .block_on(dispatch(RpcRequest {
@@ -442,5 +480,99 @@ mod tests {
         assert!(log.contains("skills browse --size 100"));
         assert!(log.contains("skills search github --limit 20"));
         assert!(log.contains("skills install github-pr-review"));
+    }
+
+    #[test]
+    fn dispatch_exposes_real_hermes_runtime_commands() {
+        let _guard = env_lock().lock().expect("lock env");
+        let home = unique_temp_home("stage2-hermes-runtime");
+        fs::create_dir_all(&home).expect("create temp home");
+        let command_log = home.join("fake-hermes-commands.log");
+        std::env::set_var("HOME", &home);
+        std::env::set_var("SCRIPTRON_HERMES_BIN", fixture_path("fake-hermes"));
+        std::env::set_var("FAKE_HERMES_LOG", &command_log);
+
+        let rt = Runtime::new().expect("runtime");
+        let status = rt
+            .block_on(dispatch(RpcRequest {
+                method: "hermes_status_report".into(),
+                params: json!({}),
+            }))
+            .expect("status dispatch");
+        assert_eq!(status["success"], true);
+        assert!(status["output"]
+            .as_str()
+            .expect("output")
+            .contains("Hermes Agent Status"));
+
+        let doctor = rt
+            .block_on(dispatch(RpcRequest {
+                method: "hermes_doctor".into(),
+                params: json!({}),
+            }))
+            .expect("doctor dispatch");
+        assert_eq!(doctor["success"], true);
+        assert!(doctor["output"]
+            .as_str()
+            .expect("output")
+            .contains("Hermes Doctor"));
+
+        let auth = rt
+            .block_on(dispatch(RpcRequest {
+                method: "hermes_auth_status".into(),
+                params: json!({ "provider": "codex" }),
+            }))
+            .expect("auth dispatch");
+        assert_eq!(auth["success"], true);
+        assert!(auth["output"]
+            .as_str()
+            .expect("output")
+            .contains("codex: logged in"));
+
+        let link = rt
+            .block_on(dispatch(RpcRequest {
+                method: "hermes_provider_link_status".into(),
+                params: json!({ "provider": "codex" }),
+            }))
+            .expect("provider link dispatch");
+        assert_eq!(link["success"], true);
+        assert!(link["output"]
+            .as_str()
+            .expect("output")
+            .contains("Hermes auth"));
+
+        let secret = "sk-from-ffi";
+        let saved = rt
+            .block_on(dispatch(RpcRequest {
+                method: "hermes_save_api_key".into(),
+                params: json!({ "provider": "openrouter", "api_key": secret }),
+            }))
+            .expect("save key dispatch");
+        assert_eq!(saved["success"], true);
+        let save_output = saved["output"].as_str().expect("save output");
+        assert!(save_output.contains("OPENROUTER_API_KEY"));
+        assert!(!save_output.contains(secret));
+
+        let env_contents =
+            fs::read_to_string(home.join(".hermes").join(".env")).expect("read hermes env");
+        assert!(env_contents.contains("OPENROUTER_API_KEY=sk-from-ffi"));
+
+        let chat = rt
+            .block_on(dispatch(RpcRequest {
+                method: "hermes_test_chat".into(),
+                params: json!({}),
+            }))
+            .expect("test chat dispatch");
+        assert_eq!(chat["success"], true);
+        assert!(chat["output"]
+            .as_str()
+            .expect("chat output")
+            .contains("Fake Hermes response"));
+
+        let log = fs::read_to_string(command_log).expect("read fake hermes command log");
+        assert!(log.contains("status"));
+        assert!(log.contains("doctor"));
+        assert!(log.contains("auth status codex"));
+        assert!(log.contains("chat -q"));
     }
 }

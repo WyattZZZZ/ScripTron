@@ -57,12 +57,37 @@ async fn real_hermes_skills_browse_search_hits_official_repository() {
             .take(20)
             .collect::<Vec<_>>()
     );
+    assert!(
+        browsed.iter().any(|item| item.wraps_external_cli),
+        "expected Hermes browse to expose official CLI wrapper skills, got first items: {:?}",
+        browsed
+            .iter()
+            .map(|item| (
+                item.name.as_str(),
+                item.description.as_str(),
+                item.wraps_external_cli,
+                item.tags.as_slice(),
+                item.icon.as_str()
+            ))
+            .take(20)
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        browsed
+            .iter()
+            .filter(|item| item.wraps_external_cli)
+            .all(|item| item.tags.iter().any(|tag| tag == "cli") && item.icon == "terminal"),
+        "CLI wrapper catalog items must carry cli tag and terminal icon"
+    );
 
     let searched = core
         .hermes_skills_search("github".to_string())
         .await
         .expect("search real Hermes official skill repository");
-    assert!(!searched.is_empty(), "Hermes skill search returned no results");
+    assert!(
+        !searched.is_empty(),
+        "Hermes skill search returned no results"
+    );
     assert!(searched
         .iter()
         .all(|item| item.source == "Hermes Official / Hub"));

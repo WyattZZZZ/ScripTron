@@ -1,13 +1,357 @@
 import XCTest
+import AppKit
 import SwiftUI
 @testable import ScripTronNative
 
 @MainActor
 final class UIBridgeDummyTests: XCTestCase {
+    func testWorkspaceAndProjectViewsRenderPrimaryStatesWithInjectedModel() throws {
+        let bridge = DummyScripTronBridge()
+        bridge.stub("list_tools", json: #"[]"#)
+        bridge.stub("get_active_config", json: #"{"provider":"hermes","model":"Hermes Dummy"}"#)
+        bridge.stub("get_auth_status", json: #"[{"provider":"hermes","display_name":"Hermes Gateway","connected":true,"auth_method":"stdio","available_models":["Hermes Dummy"],"default_model":"Hermes Dummy"}]"#)
+        bridge.stub("list_skills", json: #"[]"#)
+        bridge.stub("list_tronhub", json: #"[]"#)
+
+        let model = AppModel(bridge: bridge)
+        model.workspacePath = "/tmp/ScripTron"
+        model.projects = [
+            AppModel.ProjectItem(name: "demo", path: "/tmp/ScripTron/demo", status: "Ready", archived: false, packaged: false)
+        ]
+        model.files = [
+            FileEntry(name: "main.tron", path: "/tmp/ScripTron/demo/main.tron", is_dir: false, is_tron: true)
+        ]
+        model.openTabs = [
+            FileEntry(name: "main.tron", path: "/tmp/ScripTron/demo/main.tron", is_dir: false, is_tron: true),
+            FileEntry(name: "notes.md", path: "/tmp/ScripTron/demo/notes.md", is_dir: false, is_tron: false)
+        ]
+        model.activeTabPath = "/tmp/ScripTron/demo/main.tron"
+        model.dirtyTabPaths = ["/tmp/ScripTron/demo/notes.md"]
+        model.activeProjectPath = "/tmp/ScripTron/demo"
+        model.activeProjectName = "demo"
+        model.selectedFile = TronFile(
+            path: "/tmp/ScripTron/demo/main.tron",
+            cells: [TronCell(run: false, content: "# Demo")],
+            blackboard: AnyCodable(["notes": []])
+        )
+        model.documentBlocks = [
+            AppModel.DocumentBlock(kind: .heading(1), content: "Demo"),
+            AppModel.DocumentBlock(kind: .run, content: "Summarize the project.", name: "summary")
+        ]
+
+        for panel in AppModel.WorkspacePanel.allCases {
+            model.workspacePanel = panel
+            render(WorkspaceView().environmentObject(model))
+        }
+
+        model.files = []
+        model.projects = [
+            AppModel.ProjectItem(name: "old-demo", path: "/tmp/ScripTron/old-demo", status: "Archived", archived: true, packaged: false)
+        ]
+        model.workspacePanel = .archived
+        render(WorkspaceView().environmentObject(model))
+        model.files = [
+            FileEntry(name: "main.tron", path: "/tmp/ScripTron/demo/main.tron", is_dir: false, is_tron: true)
+        ]
+
+        model.screen = .project(.explorer)
+        render(ProjectStudioView().environmentObject(model))
+
+        model.screen = .project(.settings)
+        render(ProjectStudioView().environmentObject(model))
+
+        render(RootView().environmentObject(model))
+
+        model.screen = .project(.explorer)
+        model.selectedFile = nil
+        model.documentBlocks = []
+        model.openedFile = AppModel.OpenedFile(
+            name: "notes.md",
+            path: "/tmp/ScripTron/demo/notes.md",
+            content: "# Notes\nBody",
+            viewer: .text,
+            language: "Markdown"
+        )
+        render(ProjectStudioView().environmentObject(model))
+
+        model.openedFile = AppModel.OpenedFile(
+            name: "table.csv",
+            path: "/tmp/ScripTron/demo/table.csv",
+            content: "name,value\nalpha,1",
+            viewer: .csv,
+            language: "CSV"
+        )
+        render(ProjectStudioView().environmentObject(model))
+
+        model.openedFile = AppModel.OpenedFile(
+            name: "archive.bin",
+            path: "/tmp/ScripTron/demo/archive.bin",
+            content: "",
+            viewer: .unsupported,
+            language: "Binary"
+        )
+        render(ProjectStudioView().environmentObject(model))
+
+        let app = ScripTronNativeApp()
+        _ = app.body
+    }
+
+    func testProjectStudioRendersDocumentMentionRunEventsAndSettingsBranches() throws {
+        let bridge = DummyScripTronBridge()
+        bridge.stub("get_memory_snapshot", json: #"""
+        {
+          "global_memory": {
+            "user_name_preference": "Wyatt",
+            "agent_style_preference": "Concise",
+            "execution_rules": ["Use local files"],
+            "notes": []
+          },
+          "project_memory": {
+            "project_path": "/tmp/ScripTron/demo",
+            "project_name": "demo",
+            "archived": false,
+            "format_rules": ["Markdown first"],
+            "task_constraints": ["No network"],
+            "glossary": {},
+            "long_context": []
+          },
+          "effective_prompt": "Use local files\nMarkdown first"
+        }
+        """#)
+        let model = AppModel(bridge: bridge)
+        model.workspacePath = "/tmp/ScripTron"
+        model.activeProjectPath = "/tmp/ScripTron/demo"
+        model.activeProjectName = "demo"
+        model.screen = .project(.explorer)
+        model.files = [
+            FileEntry(name: "main.tron", path: "/tmp/ScripTron/demo/main.tron", is_dir: false, is_tron: true)
+        ]
+        model.openTabs = [
+            FileEntry(name: "main.tron", path: "/tmp/ScripTron/demo/main.tron", is_dir: false, is_tron: true)
+        ]
+        model.activeTabPath = "/tmp/ScripTron/demo/main.tron"
+        model.selectedFile = TronFile(
+            path: "/tmp/ScripTron/demo/main.tron",
+            cells: [TronCell(run: false, content: "# Demo")],
+            blackboard: AnyCodable(["notes": []])
+        )
+        model.mentionSearch = MentionSearchResult(
+            tools: [
+                MentionItem(id: "skill:browser", label: "browser", kind: "skill", path: "", detail: "Browser skill", installed: true, modules: [])
+            ],
+            files: [
+                MentionItem(id: "file:notes", label: "notes.tron", kind: "tron", path: "/tmp/ScripTron/demo/notes.tron", detail: "Notes", installed: true, modules: [])
+            ],
+            cloud_suggestions: [
+                MentionItem(id: "cloud:slides", label: "slides", kind: "cloud", path: "", detail: "Cloud slides", installed: false, modules: [])
+            ]
+        )
+        model.functionMentions = [
+            MentionItem(
+                id: "function:build_deck",
+                label: "build_deck",
+                kind: "function",
+                path: "/tmp/ScripTron/demo/main.tron",
+                detail: "Run block",
+                installed: true,
+                modules: [MentionModule(name: "build_deck", kind: "executable", injection: "function_call")]
+            )
+        ]
+        model.documentBlocks = [
+            AppModel.DocumentBlock(kind: .markdownLine, content: "# Launch Brief"),
+            AppModel.DocumentBlock(kind: .markdownLine, content: "> Use the latest brief"),
+            AppModel.DocumentBlock(kind: .heading(2), content: "Milestones"),
+            AppModel.DocumentBlock(kind: .list(true), content: "Research\nDraft\nReview"),
+            AppModel.DocumentBlock(kind: .table, content: "| Name | Score |\n| --- | --- |\n| Ada | 10 |"),
+            AppModel.DocumentBlock(kind: .quote, content: "A focused quote."),
+            AppModel.DocumentBlock(kind: .code, content: "let deck = true"),
+            AppModel.DocumentBlock(kind: .checklist, content: "[x] Outline\n[ ] Build deck"),
+            AppModel.DocumentBlock(kind: .divider, content: "---"),
+            AppModel.DocumentBlock(kind: .run, content: "Use @browser", name: "build_deck"),
+            AppModel.DocumentBlock(kind: .gen, content: "Generate follow-up tasks.")
+        ]
+        let runBlock = try XCTUnwrap(model.documentBlocks.first { $0.kind == .run })
+        model.runEventsByBlockID[runBlock.id] = [
+            RunEvent.local(type: "message_delta", content: "Drafting response"),
+            RunEvent.local(type: "tool_start", content: "write_file"),
+            RunEvent.local(type: "delegation_status", content: "Research agent running"),
+            RunEvent.local(type: "approval_request", content: "Allow write?")
+        ]
+
+        render(ProjectStudioView().environmentObject(model))
+
+        model.screen = .project(.settings)
+        model.memorySnapshot = nil
+        render(ProjectStudioView().environmentObject(model))
+
+        XCTAssertTrue(bridge.calledMethods.contains("get_memory_snapshot"))
+        XCTAssertEqual(model.memorySnapshot?.global_memory.user_name_preference, "Wyatt")
+    }
+
+    func testProjectStudioRendersRunResponseMediaAndAdditionalFileViewers() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        let previewURL = tempDir.appendingPathComponent("preview.txt")
+        try "Preview body".write(to: previewURL, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let model = AppModel(bridge: DummyScripTronBridge())
+        model.workspacePath = tempDir.path
+        model.activeProjectPath = tempDir.path
+        model.activeProjectName = "demo"
+        model.screen = .project(.explorer)
+        model.openTabs = [
+            FileEntry(name: "main.tron", path: tempDir.appendingPathComponent("main.tron").path, is_dir: false, is_tron: true)
+        ]
+        model.activeTabPath = tempDir.appendingPathComponent("main.tron").path
+        model.selectedFile = TronFile(
+            path: tempDir.appendingPathComponent("main.tron").path,
+            cells: [TronCell(run: false, content: "# Media")],
+            blackboard: AnyCodable(["notes": []])
+        )
+        model.documentBlocks = [
+            AppModel.DocumentBlock(kind: .run, content: "Render media response.", name: "media")
+        ]
+        let runBlock = try XCTUnwrap(model.documentBlocks.first)
+        model.runEventsByBlockID[runBlock.id] = [
+            RunEvent.local(
+                type: "message_delta",
+                content: """
+                Media response
+                ![Chart](chart.png)
+                Done
+                """
+            )
+        ]
+
+        render(ProjectStudioView().environmentObject(model))
+
+        model.selectedFile = nil
+        model.documentBlocks = []
+        model.openedFile = AppModel.OpenedFile(
+            name: "script.swift",
+            path: tempDir.appendingPathComponent("script.swift").path,
+            content: "import Foundation\nlet value = true",
+            viewer: .code,
+            language: "Swift"
+        )
+        render(ProjectStudioView().environmentObject(model))
+
+        model.openedFile = AppModel.OpenedFile(
+            name: "preview.txt",
+            path: previewURL.path,
+            content: "",
+            viewer: .quickLook,
+            language: "Preview"
+        )
+        render(ProjectStudioView().environmentObject(model))
+    }
+
+    func testProjectStudioRendersEmptyDirtySelectedAndRunningDocumentStates() throws {
+        let model = AppModel(bridge: DummyScripTronBridge())
+        model.workspacePath = "/tmp/ScripTron"
+        model.activeProjectPath = "/tmp/ScripTron/demo"
+        model.activeProjectName = "demo"
+        model.screen = .project(.explorer)
+        model.files = [
+            FileEntry(name: "main.tron", path: "/tmp/ScripTron/demo/main.tron", is_dir: false, is_tron: true)
+        ]
+
+        model.selectedFile = nil
+        model.openedFile = nil
+        model.documentBlocks = []
+        render(ProjectStudioView().environmentObject(model))
+
+        model.selectedFile = TronFile(
+            path: "/tmp/ScripTron/demo/main.tron",
+            cells: [],
+            blackboard: AnyCodable(["notes": []])
+        )
+        model.openTabs = [
+            FileEntry(name: "main.tron", path: "/tmp/ScripTron/demo/main.tron", is_dir: false, is_tron: true)
+        ]
+        model.activeTabPath = "/tmp/ScripTron/demo/main.tron"
+        model.documentBlocks = []
+        render(ProjectStudioView().environmentObject(model))
+
+        let first = AppModel.DocumentBlock(kind: .markdownLine, content: "Editable")
+        let second = AppModel.DocumentBlock(kind: .markdownLine, content: "Also selected")
+        model.documentBlocks = [first, second]
+        model.selectedDocumentBlockIDs = [first.id, second.id]
+        model.isDirty = true
+        model.isRunningTask = true
+        render(ProjectStudioView().environmentObject(model))
+    }
+
+    func testProjectStudioRendersFocusedMarkdownGenFolderAndRuntimeSettingsBranches() throws {
+        let bridge = DummyScripTronBridge()
+        bridge.stub("get_memory_snapshot", json: #"""
+        {
+          "global_memory": {
+            "user_name_preference": "",
+            "agent_style_preference": "",
+            "execution_rules": [],
+            "notes": []
+          },
+          "project_memory": {
+            "project_path": "/tmp/ScripTron/demo",
+            "project_name": "demo",
+            "archived": false,
+            "format_rules": [],
+            "task_constraints": [],
+            "glossary": {},
+            "long_context": []
+          },
+          "effective_prompt": ""
+        }
+        """#)
+        let model = AppModel(bridge: bridge)
+        model.workspacePath = "/tmp/ScripTron"
+        model.activeProjectPath = "/tmp/ScripTron/demo"
+        model.activeProjectName = "demo"
+        model.screen = .project(.explorer)
+        let folder = FileEntry(name: "assets", path: "/tmp/ScripTron/demo/assets", is_dir: true, is_tron: false)
+        let child = FileEntry(name: "nested.tron", path: "/tmp/ScripTron/demo/assets/nested.tron", is_dir: false, is_tron: true)
+        model.files = [
+            folder,
+            FileEntry(name: "main.tron", path: "/tmp/ScripTron/demo/main.tron", is_dir: false, is_tron: true)
+        ]
+        model.folderChildren[folder.path] = [child]
+        model.expandedFolders = [folder.path]
+        model.dropHoverFolderPath = folder.path
+        model.draggedFilePath = child.path
+        model.openTabs = [
+            FileEntry(name: "main.tron", path: "/tmp/ScripTron/demo/main.tron", is_dir: false, is_tron: true)
+        ]
+        model.activeTabPath = "/tmp/ScripTron/demo/main.tron"
+        model.selectedFile = TronFile(
+            path: "/tmp/ScripTron/demo/main.tron",
+            cells: [TronCell(run: false, content: "# Demo")],
+            blackboard: AnyCodable(["notes": []])
+        )
+        let focusedCode = AppModel.DocumentBlock(kind: .markdownLine, content: "`let value = true`")
+        model.documentBlocks = [
+            AppModel.DocumentBlock(kind: .markdownLine, content: "---"),
+            focusedCode,
+            AppModel.DocumentBlock(kind: .heading(3), content: "Small Heading"),
+            AppModel.DocumentBlock(kind: .gen, content: "Draft markdown from the selected context.")
+        ]
+        model.focusedBlockID = focusedCode.id
+
+        render(ProjectStudioView().environmentObject(model))
+
+        model.screen = .project(.settings)
+        let settingsHost = render(ProjectStudioView().environmentObject(model))
+        switchFirstSegmentedControl(in: settingsHost, to: 1)
+
+        XCTAssertTrue(bridge.calledMethods.contains("get_memory_snapshot"))
+    }
+
     func testBootUsesInjectedDummyBridgeToLoadWorkspaceAndHermesModelState() throws {
         let bridge = DummyScripTronBridge()
         bridge.stub("get_workspace_path", json: #""/tmp/ScripTron""#)
         bridge.stub("list_workspace_files", json: #"[]"#)
+        bridge.stub("list_projects", json: #"[]"#)
         bridge.stub("list_tools", json: #"[]"#)
         bridge.stub("get_active_config", json: #"{"provider":"hermes","model":"Hermes Dummy"}"#)
         bridge.stub("get_auth_status", json: #"[{"provider":"hermes","display_name":"Hermes Gateway","connected":true,"auth_method":"stdio","available_models":["Hermes Dummy"],"default_model":"Hermes Dummy"}]"#)
@@ -22,7 +366,58 @@ final class UIBridgeDummyTests: XCTestCase {
         XCTAssertEqual(model.activeConfig?.model, "Hermes Dummy")
         XCTAssertEqual(model.providerStatuses.first?.display_name, "Hermes Gateway")
         XCTAssertEqual(model.status, "Connected")
+        XCTAssertNil(model.errorMessage)
         XCTAssertTrue(bridge.calledMethods.contains("get_auth_status"))
+    }
+
+    @discardableResult
+    private func render<V: View>(_ view: V) -> NSHostingView<V> {
+        let hostingView = NSHostingView(rootView: view)
+        hostingView.frame = CGRect(x: 0, y: 0, width: 1280, height: 820)
+        hostingView.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+        return hostingView
+    }
+
+    private func switchFirstSegmentedControl(in view: NSView, to segment: Int) {
+        guard let control = descendants(of: view, type: NSSegmentedControl.self).first(where: { $0.segmentCount > segment }) else {
+            return
+        }
+        control.selectedSegment = segment
+        if let action = control.action {
+            NSApp.sendAction(action, to: control.target, from: control)
+        }
+        view.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.01))
+    }
+
+    private func descendants<T: NSView>(of view: NSView, type: T.Type) -> [T] {
+        var matches = view.subviews.compactMap { $0 as? T }
+        for subview in view.subviews {
+            matches.append(contentsOf: descendants(of: subview, type: type))
+        }
+        return matches
+    }
+
+    private func waitForHermesOutput(on model: AppModel, containing needle: String? = nil) async throws {
+        for _ in 0..<100 {
+            if let output = model.hermesCommandOutput?.output,
+               needle.map({ output.contains($0) }) ?? true {
+                return
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTFail("Timed out waiting for Hermes command output")
+    }
+
+    private func waitForHermesAuthParam(on bridge: DummyScripTronBridge, provider: String) async throws {
+        for _ in 0..<100 {
+            if bridge.lastParams["hermes_provider_link_status"]?["provider"] as? String == provider {
+                return
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
+        }
+        XCTFail("Timed out waiting for Hermes provider link status provider \(provider)")
     }
 
     func testCreateProjectRejectsEmptyNameBeforeBridgeCall() throws {
@@ -294,6 +689,37 @@ final class UIBridgeDummyTests: XCTestCase {
         XCTAssertEqual(model.providerStatuses.first?.display_name, "Hermes Gateway")
     }
 
+    func testModelManagementHermesCommandsCallBridgeAndStoreOutput() async throws {
+        let bridge = DummyScripTronBridge()
+        bridge.stub("hermes_status_report", json: #"{"success":true,"output":"Hermes Agent Status\nOpenAI Codex: logged in","exit_code":0}"#)
+        bridge.stub("hermes_doctor", json: #"{"success":true,"output":"Hermes Doctor\nCommand Installation: OK","exit_code":0}"#)
+        bridge.stub("hermes_provider_link_status", json: #"{"success":true,"output":"Hermes auth (codex)\n\ncodex: logged in\n\nLocal Codex CLI\n\ncodex-cli 9.9.9","exit_code":0}"#)
+        bridge.stub("get_auth_status", json: #"[]"#)
+        let model = AppModel(bridge: bridge)
+
+        model.checkHermesInstall()
+        try await waitForHermesOutput(on: model)
+        XCTAssertTrue(bridge.calledMethods.contains("hermes_status_report"))
+        XCTAssertTrue(model.hermesCommandOutput?.output.contains("Hermes Agent Status") == true)
+
+        model.runHermesDoctor()
+        try await waitForHermesOutput(on: model, containing: "Hermes Doctor")
+        XCTAssertTrue(bridge.calledMethods.contains("hermes_doctor"))
+
+        model.checkHermesAuth(provider: "codex")
+        try await waitForHermesAuthParam(on: bridge, provider: "codex")
+
+        model.checkHermesAuth(provider: "anthropic")
+        try await waitForHermesAuthParam(on: bridge, provider: "anthropic")
+
+        model.checkHermesAuth(provider: "openai")
+        try await waitForHermesAuthParam(on: bridge, provider: "openai")
+
+        model.openHermesModelInstructions()
+        XCTAssertTrue(model.hermesCommandOutput?.output.contains("hermes model") == true)
+        XCTAssertTrue(model.hermesCommandOutput?.output.contains("Claude Code") == true)
+    }
+
     func testRunEventPresentationSplitsDummyHermesEventsIntoUICoreSections() throws {
         let events: [RunEvent] = [
             RunEvent.local(type: "message_delta", content: "Drafting"),
@@ -360,6 +786,8 @@ final class UIBridgeDummyTests: XCTestCase {
         XCTAssertTrue(cells.contains { $0["run"] as? Bool == true && ($0["content"] as? String)?.contains("[[scriptron:run-name]] ship_plan") == true })
         XCTAssertEqual(model.status, "Saved main.tron")
         XCTAssertFalse(model.isDirty)
+        XCTAssertTrue(model.documentBlocks.contains { $0.kind == .heading(1) && $0.content == "Updated Brief" })
+        XCTAssertTrue(model.documentBlocks.contains { $0.kind == .run && $0.name == "ship_plan!" && $0.content.contains("Draft launch notes") })
     }
 
     func testPlainFileEditingMarksDirtyAndSavesThroughBridge() throws {
@@ -440,6 +868,52 @@ final class UIBridgeDummyTests: XCTestCase {
         XCTAssertEqual(bridge.voidCalls.last?.method, "remove_skill")
         XCTAssertEqual(bridge.voidCalls.last?.params["name"] as? String, "writer")
         XCTAssertEqual(model.status, "Skill removed")
+    }
+
+    func testWorkspacePanelSwitchUsesLightweightManagementRefresh() throws {
+        let bridge = DummyScripTronBridge()
+        bridge.stub("list_tools", json: #"[]"#)
+        bridge.stub("get_active_config", json: #"{"provider":"hermes","model":"Hermes Dummy"}"#)
+        bridge.stub("get_auth_status", json: #"[{"provider":"hermes","display_name":"Hermes Gateway","connected":true,"auth_method":"stdio","available_models":["Hermes Dummy"],"default_model":"Hermes Dummy"}]"#)
+        bridge.stub("list_skills", json: #"[]"#)
+        bridge.stub("list_tronhub", json: #"[]"#)
+        bridge.stub("hermes_skills_browse", json: #"[]"#)
+        bridge.stubVoid("sync_hermes_workspace_bridge")
+        let model = AppModel(bridge: bridge)
+
+        model.loadWorkspaceManagementData(includeRemote: false)
+        let registryRefreshCount = bridge.calledMethods.filter { $0 == "list_tools" }.count
+
+        model.selectWorkspacePanel(.cliManagement)
+        model.selectWorkspacePanel(.modelManagement)
+        model.selectWorkspacePanel(.skillManagement)
+
+        XCTAssertEqual(bridge.calledMethods.filter { $0 == "list_tools" }.count, registryRefreshCount)
+        XCTAssertTrue(bridge.calledMethods.contains("get_auth_status"))
+        XCTAssertFalse(bridge.calledMethods.contains("hermes_skills_browse"))
+        XCTAssertFalse(bridge.voidCalls.contains { $0.method == "sync_hermes_workspace_bridge" })
+    }
+
+    func testRepeatedBootDoesNotRefreshRegistryAgain() throws {
+        let bridge = DummyScripTronBridge()
+        bridge.stub("get_workspace_path", json: #""/tmp/ScripTron""#)
+        bridge.stub("list_workspace_files", json: #"[]"#)
+        bridge.stub("list_projects", json: #"[]"#)
+        bridge.stub("list_tools", json: #"[]"#)
+        bridge.stub("get_active_config", json: #"{"provider":"hermes","model":"Hermes Dummy"}"#)
+        bridge.stub("get_auth_status", json: #"[{"provider":"hermes","display_name":"Hermes Gateway","connected":true,"auth_method":"stdio","available_models":["Hermes Dummy"],"default_model":"Hermes Dummy"}]"#)
+        bridge.stub("list_skills", json: #"[]"#)
+        bridge.stub("list_tronhub", json: #"[]"#)
+        let model = AppModel(bridge: bridge)
+
+        model.boot()
+        let registryRefreshCount = bridge.calledMethods.filter { $0 == "list_tools" }.count
+        let initializeCount = bridge.calledMethods.filter { $0 == "initialize" }.count
+
+        model.boot()
+
+        XCTAssertEqual(bridge.calledMethods.filter { $0 == "list_tools" }.count, registryRefreshCount)
+        XCTAssertEqual(bridge.calledMethods.filter { $0 == "initialize" }.count, initializeCount)
     }
 
     func testExtensionCatalogFiltersBySourceCategoryAndSearchWithHermesOwnershipActions() {

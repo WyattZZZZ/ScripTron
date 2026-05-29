@@ -220,6 +220,8 @@ struct ExtensionCatalogItem: Identifiable, Equatable {
     let wrapsExternalCLI: Bool
     let hermesCompatible: Bool
     let installRef: String?
+    let tags: [String]
+    let icon: String
 
     init(
         name: String,
@@ -231,7 +233,9 @@ struct ExtensionCatalogItem: Identifiable, Equatable {
         installed: Bool,
         wrapsExternalCLI: Bool,
         hermesCompatible: Bool,
-        installRef: String? = nil
+        installRef: String? = nil,
+        tags: [String] = [],
+        icon: String? = nil
     ) {
         self.name = name
         self.kind = kind
@@ -243,6 +247,8 @@ struct ExtensionCatalogItem: Identifiable, Equatable {
         self.wrapsExternalCLI = wrapsExternalCLI
         self.hermesCompatible = hermesCompatible
         self.installRef = installRef
+        self.tags = tags
+        self.icon = icon ?? Self.defaultIcon(kind: kind, wrapsExternalCLI: wrapsExternalCLI)
     }
 
     var primaryAction: ExtensionCatalogAction {
@@ -250,10 +256,43 @@ struct ExtensionCatalogItem: Identifiable, Equatable {
         if hermesCompatible { return .installIntoHermes }
         return .installIntoScripTron
     }
+
+    var displayBadges: [String] {
+        var badges: [String] = []
+        appendBadge(source.rawValue, to: &badges)
+        appendBadge(category, to: &badges)
+        appendBadge(trustLevel, to: &badges)
+        tags.forEach { appendBadge($0, to: &badges) }
+        if wrapsExternalCLI {
+            appendBadge("cli", to: &badges)
+        }
+        return badges
+    }
+
+    private static func defaultIcon(kind: ExtensionCatalogKind, wrapsExternalCLI: Bool) -> String {
+        if wrapsExternalCLI { return "terminal" }
+        switch kind {
+        case .cli: return "terminal"
+        case .skill: return "sparkles"
+        }
+    }
+
+    private func appendBadge(_ badge: String, to badges: inout [String]) {
+        let trimmed = badge.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        guard !badges.contains(where: { $0.caseInsensitiveCompare(trimmed) == .orderedSame }) else { return }
+        badges.append(trimmed)
+    }
 }
 
 struct ExtensionCatalogState {
     let items: [ExtensionCatalogItem]
+    let pageSize: Int
+
+    init(items: [ExtensionCatalogItem], pageSize: Int = 24) {
+        self.items = items
+        self.pageSize = max(1, pageSize)
+    }
 
     var sources: [ExtensionCatalogSource] {
         ExtensionCatalogSource.allCases.filter { source in
@@ -277,6 +316,20 @@ struct ExtensionCatalogState {
                     || item.category.lowercased().contains(normalizedQuery)
             }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    func pageCount(source: ExtensionCatalogSource, category: String, query: String) -> Int {
+        let count = filtered(source: source, category: category, query: query).count
+        return max(1, Int(ceil(Double(count) / Double(pageSize))))
+    }
+
+    func page(source: ExtensionCatalogSource, category: String, query: String, page: Int) -> [ExtensionCatalogItem] {
+        let filteredItems = filtered(source: source, category: category, query: query)
+        let pageIndex = max(1, page) - 1
+        let start = pageIndex * pageSize
+        guard start < filteredItems.count else { return [] }
+        let end = min(start + pageSize, filteredItems.count)
+        return Array(filteredItems[start..<end])
     }
 }
 
@@ -368,6 +421,44 @@ enum RunEventPresentation {
         )
     }
 
+    static func displayText(for event: RunEvent) -> String? {
+        guard let value = event.content?.value else { return nil }
+        if let string = value as? String { return string }
+        guard !(value is NSNull),
+              let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted]),
+              let text = String(data: data, encoding: .utf8) else {
+            return nil
+        }
+        return text
+    }
+
+    static func logText(for event: RunEvent) -> String {
+        switch event.type {
+        case "plan":
+            return "PLAN\n\(displayText(for: event) ?? "")"
+        case "skill_selected":
+            return "SKILLS \(event.skills?.joined(separator: ", ") ?? "")"
+        case "tool_call":
+            return "TOOL \(event.tool ?? "")\nARGS \(jsonText(event.args?.value))"
+        case "tool_result":
+            return "\(event.success == false ? "FAILED" : "RESULT") \(event.tool ?? "")\n\(event.output ?? displayText(for: event) ?? "")"
+        case "step_started":
+            return "STEP START \(event.step_id ?? "") \(event.tool ?? "")\nARGS \(jsonText(event.args?.value))"
+        case "step_retried":
+            return "STEP RETRY \(event.step_id ?? "") attempt \(event.attempt ?? 0)\n\(event.decision ?? ""): \(event.reason ?? "")"
+        case "step_completed":
+            return "STEP DONE \(event.step_id ?? "") \(event.tool ?? "")\n\(event.output ?? "")"
+        case "step_failed":
+            return "STEP FAILED \(event.step_id ?? "") \(event.tool ?? "")\n\(event.error ?? "")"
+        case "thinking":
+            return "THINKING\n\(displayText(for: event) ?? "")"
+        case "error":
+            return "ERROR\n\(event.error ?? displayText(for: event) ?? "")"
+        default:
+            return "\(event.type)\n\(displayText(for: event) ?? "")"
+        }
+    }
+
     private static let legacyLogTypes: Set<String> = [
         "warning",
         "plan",
@@ -381,6 +472,15 @@ enum RunEventPresentation {
         "thinking",
         "error"
     ]
+
+    private static func jsonText(_ value: Any?) -> String {
+        guard let value, !(value is NSNull),
+              let data = try? JSONSerialization.data(withJSONObject: value, options: []),
+              let text = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return text
+    }
 }
 
 struct HermesApprovalAction: Equatable {
@@ -564,6 +664,7 @@ struct HermesBridgeMethodCatalog {
         "hermes_secret_respond",
         "hermes_command_catalog",
         "hermes_command_dispatch",
+        "sync_hermes_workspace_bridge",
         "hermes_skills_browse",
         "hermes_skills_search",
         "hermes_skills_install",

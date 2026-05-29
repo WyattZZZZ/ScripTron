@@ -160,6 +160,7 @@ final class AppModel: ObservableObject {
     @Published var hermesSkillCatalog: [ExtensionCatalogItem] = []
     @Published var activeConfig: ActiveConfig?
     @Published var providerStatuses: [ProviderStatus] = []
+    @Published var hermesCommandOutput: HermesCommandReport?
     @Published var pluginLoginRunning: String? = nil
     @Published var pluginLoginOutput: (name: String, output: String)? = nil
     @Published var installManifestDraft = AppModel.defaultManifestDraft
@@ -178,6 +179,8 @@ final class AppModel: ObservableObject {
     private let bridge: ScripTronBridgeClient
     private var externalTabStates: [String: ExternalTabState] = [:]
     private var tronTabStates: [String: TronTabState] = [:]
+    private var booted = false
+    private var workspaceManagementDataLoaded = false
 
     init(bridge: ScripTronBridgeClient = AppModel.defaultBridge()) {
         self.bridge = bridge
@@ -195,14 +198,16 @@ final class AppModel: ObservableObject {
     }
 
     func boot() {
+        guard !booted else { return }
         do {
             try bridge.initialize()
+            booted = true
             workspacePath = try bridge.call("get_workspace_path", as: String.self)
             if case .project = screen, activeProjectPath == nil {
                 screen = .workspace
             }
             refreshFiles()
-            loadWorkspaceManagementData()
+            loadWorkspaceManagementData(reportErrors: false, includeRemote: false)
             status = "Connected"
         } catch {
             errorMessage = error.localizedDescription
@@ -298,20 +303,36 @@ final class AppModel: ObservableObject {
     func selectWorkspacePanel(_ panel: WorkspacePanel) {
         workspacePanel = panel
         if panel == .cliMarket || panel == .cliManagement || panel == .skillMarket || panel == .skillManagement || panel == .modelManagement {
-            loadWorkspaceManagementData()
+            ensureWorkspaceManagementDataLoaded()
         }
         if panel == .settings {
             loadMemorySnapshot()
         }
     }
 
-    func loadWorkspaceManagementData() {
+    func ensureWorkspaceManagementDataLoaded() {
+        guard !workspaceManagementDataLoaded else { return }
+        loadWorkspaceManagementData(includeRemote: false)
+    }
+
+    func loadWorkspaceManagementData(reportErrors: Bool = true, includeRemote: Bool = true) {
+        if workspaceManagementDataLoaded && !includeRemote {
+            return
+        }
+        let previousError = errorMessage
         refreshRegistry()
         loadActiveConfig()
         loadProviderStatuses()
-        refreshHermesSkillCatalog()
+        if includeRemote {
+            syncHermesWorkspaceBridge()
+            refreshHermesSkillCatalog()
+        }
         refreshSkills()
         refreshTronhub()
+        if !reportErrors {
+            errorMessage = previousError
+        }
+        workspaceManagementDataLoaded = true
     }
 
     func refreshRegistry() {
@@ -347,6 +368,69 @@ final class AppModel: ObservableObject {
             status = "已切换到 \(model)"
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    func checkHermesInstall() {
+        runHermesReport(method: "hermes_status_report", params: [:], successStatus: "Hermes install checked")
+    }
+
+    func runHermesDoctor() {
+        runHermesReport(method: "hermes_doctor", params: [:], successStatus: "Hermes doctor completed")
+    }
+
+    func checkHermesAuth(provider: String = "codex") {
+        runHermesReport(
+            method: "hermes_provider_link_status",
+            params: ["provider": provider],
+            successStatus: "Hermes \(provider) link checked"
+        )
+    }
+
+    func openHermesModelInstructions() {
+        hermesCommandOutput = HermesCommandReport(
+            success: true,
+            output: """
+            Run `hermes model` in Terminal to link Codex, Claude Code / Anthropic, or an API-key provider.
+
+            Current checks in ScripTron:
+            - Codex button: Hermes auth plus local `codex --version`
+            - Claude Code button: Hermes auth plus local `claude --version` and `ANTHROPIC_API_KEY`
+            - API button: Hermes OpenAI auth plus `OPENAI_API_KEY` / `OPENROUTER_API_KEY`
+
+            After setup, return to ScripTron, click Refresh, then run a .tron Run block.
+            """,
+            exit_code: 0
+        )
+        status = "Hermes model setup instructions ready"
+    }
+
+    private func runHermesReport(method: String, params: [String: String], successStatus: String) {
+        status = "Running \(method)"
+        let bridge = bridge
+        let params = params
+        Task.detached(priority: .userInitiated) {
+            do {
+                let report = try bridge.call(method, params: params, as: HermesCommandReport.self)
+                await MainActor.run {
+                    self.hermesCommandOutput = report
+                    self.status = report.success ? successStatus : "Hermes command failed"
+                    if !report.success {
+                        self.errorMessage = report.output
+                    }
+                    self.loadProviderStatuses()
+                }
+            } catch {
+                await MainActor.run {
+                    self.hermesCommandOutput = HermesCommandReport(
+                        success: false,
+                        output: error.localizedDescription,
+                        exit_code: -1
+                    )
+                    self.errorMessage = error.localizedDescription
+                    self.status = "Hermes command failed"
+                }
+            }
         }
     }
 
@@ -410,7 +494,45 @@ final class AppModel: ObservableObject {
     }
 
     var skillMarketCatalogItems: [ExtensionCatalogItem] {
-        hermesSkillCatalog + tronhubSkills.map(ExtensionCatalogFixtures.fromTronhub)
+        let tronhubItems = tronhubSkills.map(ExtensionCatalogFixtures.fromTronhub)
+        if hermesSkillCatalog.isEmpty && tronhubItems.isEmpty {
+            return ExtensionCatalogFixtures.hermesSkillItems
+        }
+        return hermesSkillCatalog + tronhubItems
+    }
+
+    var cliMarketCatalogItems: [ExtensionCatalogItem] {
+        let hermesCliWrappers = hermesSkillCatalog
+            .filter(\.wrapsExternalCLI)
+            .map { item in
+                ExtensionCatalogItem(
+                    name: item.name,
+                    kind: .cli,
+                    source: item.source,
+                    category: item.category,
+                    trustLevel: item.trustLevel,
+                    description: item.description,
+                    installed: item.installed,
+                    wrapsExternalCLI: true,
+                    hermesCompatible: item.hermesCompatible,
+                    installRef: item.installRef,
+                    tags: item.tags,
+                    icon: item.icon
+                )
+            }
+        let tronhubItems = tronhubClis.map(ExtensionCatalogFixtures.fromTronhub)
+        if hermesCliWrappers.isEmpty && tronhubItems.isEmpty {
+            return ExtensionCatalogFixtures.hermesCLIItems
+        }
+        return hermesCliWrappers + tronhubItems
+    }
+
+    func syncHermesWorkspaceBridge() {
+        do {
+            try bridge.callVoid("sync_hermes_workspace_bridge")
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 
     func refreshHermesSkillCatalog() {
@@ -721,7 +843,7 @@ final class AppModel: ObservableObject {
             UserDefaults.standard.set("en", forKey: "scriptron.appLanguage")
             appLanguage = "en"
             refreshFiles()
-            loadWorkspaceManagementData()
+            loadWorkspaceManagementData(includeRemote: false)
             loadMemorySnapshot()
             status = "Factory settings restored"
         } catch {
@@ -1556,13 +1678,14 @@ final class AppModel: ObservableObject {
             return
         }
         do {
+            let savedCells = Self.cells(from: documentBlocks)
             try bridge.callVoid("save_tron_file", params: [
                 "path": file.path,
-                "cells": Self.cells(from: documentBlocks).map { ["run": $0.run, "content": $0.content] },
+                "cells": savedCells.map { ["run": $0.run, "content": $0.content] },
                 "blackboard": file.blackboard.value
             ])
-            selectedFile = try bridge.call("open_tron_file", params: ["path": file.path], as: TronFile.self)
-            draftCells = selectedFile?.cells ?? []
+            selectedFile = TronFile(path: file.path, cells: savedCells, blackboard: file.blackboard)
+            draftCells = savedCells
             documentBlocks = Self.documentBlocks(from: draftCells)
             updateFunctionRegistry()
             if let activeTabPath, let selectedFile {

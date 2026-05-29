@@ -181,7 +181,7 @@ fn tronhub_sync() -> Result<(), String> {
             .arg("clone")
             .arg("--depth")
             .arg("1")
-            .arg("https://github.com/WyattZZZZ/ScripTron_Extension")
+            .arg(tronhub_repo_url())
             .arg(&repo_dir)
             .status()
     }
@@ -191,6 +191,22 @@ fn tronhub_sync() -> Result<(), String> {
     }
     println!("Synced {}", repo_dir.display());
     Ok(())
+}
+
+fn tronhub_repo_url() -> String {
+    if let Ok(url) = env::var("SCRIPTRON_TRONHUB_REPO_URL") {
+        if !url.trim().is_empty() {
+            return url;
+        }
+    }
+    let source = "https://github.com/WyattZZZZ/ScripTron_Extension";
+    let prefix =
+        env::var("GITHUB_MIRROR_PREFIX").unwrap_or_else(|_| "https://gh-proxy.com/".into());
+    if prefix.trim().is_empty() {
+        source.into()
+    } else {
+        format!("{}{source}", prefix.trim())
+    }
 }
 
 fn tronhub_list(kind: &str) -> Result<(), String> {
@@ -562,5 +578,29 @@ mod tests {
         assert!(!home.join("ScripTron").join("main.tron").exists());
 
         let _ = fs::remove_dir_all(home);
+    }
+
+    #[test]
+    fn tronhub_repo_url_defaults_to_cn_github_mirror_and_allows_override() {
+        let _guard = env_lock().lock().expect("lock env");
+        env::remove_var("SCRIPTRON_TRONHUB_REPO_URL");
+        env::remove_var("GITHUB_MIRROR_PREFIX");
+
+        assert_eq!(
+            tronhub_repo_url(),
+            "https://gh-proxy.com/https://github.com/WyattZZZZ/ScripTron_Extension"
+        );
+
+        env::set_var("GITHUB_MIRROR_PREFIX", "");
+        assert_eq!(
+            tronhub_repo_url(),
+            "https://github.com/WyattZZZZ/ScripTron_Extension"
+        );
+
+        env::set_var(
+            "SCRIPTRON_TRONHUB_REPO_URL",
+            "https://mirror.example/scriptron.git",
+        );
+        assert_eq!(tronhub_repo_url(), "https://mirror.example/scriptron.git");
     }
 }

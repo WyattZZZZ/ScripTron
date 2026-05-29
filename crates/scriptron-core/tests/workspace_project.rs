@@ -19,6 +19,13 @@ fn unique_temp_home(label: &str) -> PathBuf {
     std::env::temp_dir().join(format!("scriptron-{label}-{}-{nanos}", std::process::id()))
 }
 
+fn fixture_path(name: &str) -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests")
+        .join("fixtures")
+        .join(name)
+}
+
 #[tokio::test]
 async fn create_project_creates_workspace_project_with_starter_tron() {
     let _guard = env_lock().lock().expect("lock env");
@@ -47,6 +54,9 @@ async fn hermes_prompt_submit_exports_workspace_cli_registry_as_local_hermes_ski
     let home = unique_temp_home("core-hermes-bridge-skill");
     fs::create_dir_all(&home).expect("create temp home");
     std::env::set_var("HOME", &home);
+    let command_log = home.join("fake-hermes-commands.log");
+    std::env::set_var("SCRIPTRON_HERMES_BIN", fixture_path("fake-hermes"));
+    std::env::set_var("FAKE_HERMES_LOG", &command_log);
 
     let workspace = home.join("ScripTron");
     let codex_dir = workspace.join(".register").join("codex");
@@ -103,6 +113,113 @@ async fn hermes_prompt_submit_exports_workspace_cli_registry_as_local_hermes_ski
     assert!(bridge_skill.contains("Run Codex from ScripTron."));
     assert!(bridge_skill.contains(&codex_dir.join("run.sh").to_string_lossy().to_string()));
     assert!(bridge_skill.contains("prompt"));
+    let log = fs::read_to_string(command_log).expect("read fake hermes command log");
+    assert!(log.contains("chat -q"));
+    assert!(log.contains("--source scriptron"));
+
+    let _ = fs::remove_dir_all(home);
+}
+
+#[tokio::test]
+async fn hermes_prompt_submit_uses_real_hermes_chat_output_for_run_events_and_blackboard() {
+    let _guard = env_lock().lock().expect("lock env");
+    let home = unique_temp_home("core-hermes-chat-submit");
+    fs::create_dir_all(&home).expect("create temp home");
+    let command_log = home.join("fake-hermes-commands.log");
+    std::env::set_var("HOME", &home);
+    std::env::set_var("SCRIPTRON_HERMES_BIN", fixture_path("fake-hermes"));
+    std::env::set_var("FAKE_HERMES_LOG", &command_log);
+
+    let workspace = home.join("ScripTron");
+    let project = workspace.join("demo");
+    fs::create_dir_all(&project).expect("create project");
+    let tron_path = project.join("main.tron");
+
+    let core = ScriptronCore::init().await.expect("init core");
+    let result = core
+        .hermes_prompt_submit(
+            vec![
+                tron_parser::TronCell {
+                    run: false,
+                    content: "# Demo Context".into(),
+                },
+                tron_parser::TronCell {
+                    run: true,
+                    content: "[[scriptron:run-name]] plan\nSay hello through real Hermes.".into(),
+                },
+            ],
+            project.to_string_lossy().into_owned(),
+            Some(serde_json::json!({ "notes": [] })),
+            Some(tron_path.to_string_lossy().into_owned()),
+        )
+        .await
+        .expect("submit through fake Hermes");
+
+    assert!(result
+        .events
+        .iter()
+        .any(|event| event.content.as_deref() == Some("Fake Hermes response for ScripTron run.")));
+    assert_eq!(
+        result.blackboard["notes"][0]["summary"],
+        "Fake Hermes response for ScripTron run."
+    );
+    assert!(
+        tron_path.exists(),
+        "submit should persist refreshed tron file"
+    );
+
+    let log = fs::read_to_string(command_log).expect("read fake hermes command log");
+    assert!(log.contains("chat -q"));
+    assert!(log.contains("--quiet"));
+    assert!(log.contains("--source scriptron"));
+
+    let _ = fs::remove_dir_all(home);
+}
+
+#[tokio::test]
+async fn sync_hermes_workspace_bridge_exports_workspace_cli_registry_without_prompt_submit() {
+    let _guard = env_lock().lock().expect("lock env");
+    let home = unique_temp_home("core-hermes-bridge-sync");
+    fs::create_dir_all(&home).expect("create temp home");
+    std::env::set_var("HOME", &home);
+
+    let workspace = home.join("ScripTron");
+    let codex_dir = workspace.join(".register").join("codex");
+    fs::create_dir_all(&codex_dir).expect("create codex registry dir");
+    fs::write(
+        codex_dir.join("run.sh"),
+        "#!/usr/bin/env bash\necho codex\n",
+    )
+    .expect("write run script");
+    fs::write(
+        codex_dir.join("manifest.json"),
+        serde_json::json!({
+            "name": "codex",
+            "kind": "model",
+            "description": "Run Codex from ScripTron.",
+            "version": "0.1.0",
+            "command": codex_dir.join("run.sh").to_string_lossy(),
+            "args_schema": [],
+            "examples": []
+        })
+        .to_string(),
+    )
+    .expect("write manifest");
+
+    let core = ScriptronCore::init().await.expect("init core");
+    core.sync_hermes_workspace_bridge()
+        .await
+        .expect("sync Hermes workspace bridge");
+
+    let bridge_skill = fs::read_to_string(
+        home.join(".hermes")
+            .join("skills")
+            .join("scriptron-workspace")
+            .join("SKILL.md"),
+    )
+    .expect("read exported bridge skill");
+    assert!(bridge_skill.contains("codex"));
+    assert!(bridge_skill.contains("Run Codex from ScripTron."));
 
     let _ = fs::remove_dir_all(home);
 }

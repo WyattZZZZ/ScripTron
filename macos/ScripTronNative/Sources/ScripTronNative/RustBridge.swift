@@ -26,6 +26,8 @@ struct HermesSkillCatalogEntry: Decodable {
     let installed: Bool
     let install_ref: String?
     let wraps_external_cli: Bool?
+    let tags: [String]?
+    let icon: String?
 
     var catalogItem: ExtensionCatalogItem {
         ExtensionCatalogItem(
@@ -38,7 +40,9 @@ struct HermesSkillCatalogEntry: Decodable {
             installed: installed,
             wrapsExternalCLI: wraps_external_cli ?? false,
             hermesCompatible: true,
-            installRef: install_ref ?? name
+            installRef: install_ref ?? name,
+            tags: tags ?? [],
+            icon: icon
         )
     }
 }
@@ -116,6 +120,16 @@ final class DummyHermesBridge: ScripTronBridgeClient, @unchecked Sendable {
             json = #"{"provider":"hermes","model":"Hermes Dummy"}"#
         case "get_auth_status":
             json = #"[{"provider":"hermes","display_name":"Hermes Gateway","connected":true,"auth_method":"stdio dummy","available_models":["Hermes Dummy"],"default_model":"Hermes Dummy"}]"#
+        case "hermes_status_report":
+            json = #"{"success":true,"output":"Hermes Agent Status\nOpenAI Codex: logged in\nClaude Code: available","exit_code":0}"#
+        case "hermes_doctor":
+            json = #"{"success":true,"output":"Hermes Doctor\nCommand Installation: OK","exit_code":0}"#
+        case "hermes_auth_status":
+            let provider = params["provider"] as? String ?? "codex"
+            json = #"{"success":true,"output":"\#(provider): logged in","exit_code":0}"#
+        case "hermes_provider_link_status":
+            let provider = params["provider"] as? String ?? "codex"
+            json = #"{"success":true,"output":"Hermes auth (\#(provider))\n\n\#(provider): logged in\n\nLocal CLI\n\navailable","exit_code":0}"#
         case "open_tron_file", "create_tron_file":
             json = #"""
             {
@@ -272,6 +286,12 @@ struct ProviderStatus: Codable, Identifiable {
     let auth_method: String
     let available_models: [String]
     let default_model: String
+}
+
+struct HermesCommandReport: Codable {
+    let success: Bool
+    let output: String
+    let exit_code: Int
 }
 
 struct CLIArgSchema: Codable, Identifiable {

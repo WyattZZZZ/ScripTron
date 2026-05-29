@@ -3,6 +3,7 @@ use process_runner::{ProcessConfig, ProcessRunner};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::BTreeMap,
+    env,
     path::{Path, PathBuf},
     process::Stdio,
     sync::Arc,
@@ -334,6 +335,13 @@ pub struct HermesStatus {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HermesCommandReport {
+    pub success: bool,
+    pub output: String,
+    pub exit_code: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HermesSkillCatalogItem {
     pub name: String,
     pub description: String,
@@ -349,10 +357,18 @@ pub struct HermesSkillCatalogItem {
     pub install_ref: Option<String>,
     #[serde(default)]
     pub wraps_external_cli: bool,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default = "default_hermes_icon")]
+    pub icon: String,
 }
 
 fn default_hermes_source() -> String {
     "Hermes Official / Hub".into()
+}
+
+fn default_hermes_icon() -> String {
+    "sparkles".into()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -845,6 +861,130 @@ impl ScriptronCore {
         }
     }
 
+    pub async fn hermes_status_report(&self) -> Result<HermesCommandReport, String> {
+        run_hermes_capture(&self.runner, ["status"].into_iter(), 60, None).await
+    }
+
+    pub async fn hermes_doctor(&self) -> Result<HermesCommandReport, String> {
+        run_hermes_capture(&self.runner, ["doctor"].into_iter(), 180, None).await
+    }
+
+    pub async fn hermes_auth_status(
+        &self,
+        provider: String,
+    ) -> Result<HermesCommandReport, String> {
+        run_hermes_capture(
+            &self.runner,
+            ["auth", "status", provider.as_str()].into_iter(),
+            60,
+            None,
+        )
+        .await
+    }
+
+    pub async fn hermes_provider_link_status(
+        &self,
+        provider: String,
+    ) -> Result<HermesCommandReport, String> {
+        let provider = provider.trim().to_ascii_lowercase();
+        let hermes_provider = match provider.as_str() {
+            "claude" | "claude-code" => "anthropic",
+            "api" => "openai",
+            other => other,
+        };
+        let auth = self.hermes_auth_status(hermes_provider.to_string()).await?;
+        let mut sections = vec![
+            format!("Hermes auth ({hermes_provider})"),
+            auth.output.clone(),
+        ];
+        let mut success = auth.success;
+        let mut exit_code = auth.exit_code;
+
+        match hermes_provider {
+            "codex" => {
+                let codex = run_local_command(&self.runner, "codex", ["--version"], 20).await;
+                success &= codex.success;
+                exit_code = exit_code.max(codex.exit_code);
+                sections.push("Local Codex CLI".into());
+                sections.push(codex.output);
+            }
+            "anthropic" => {
+                let claude = run_local_command(&self.runner, "claude", ["--version"], 20).await;
+                success &= claude.success;
+                exit_code = exit_code.max(claude.exit_code);
+                sections.push("Claude Code CLI".into());
+                sections.push(claude.output);
+                sections.push(api_key_report(["ANTHROPIC_API_KEY"].into_iter()));
+            }
+            "openai" => {
+                sections.push("API keys".into());
+                sections.push(api_key_report(
+                    ["OPENAI_API_KEY", "OPENROUTER_API_KEY"].into_iter(),
+                ));
+            }
+            _ => {}
+        }
+
+        Ok(HermesCommandReport {
+            success,
+            output: sections.join("\n\n").trim().to_string(),
+            exit_code,
+        })
+    }
+
+    pub async fn hermes_save_api_key(
+        &self,
+        provider: String,
+        api_key: String,
+    ) -> Result<HermesCommandReport, String> {
+        let key_name = hermes_api_key_name(&provider)?;
+        let value = api_key.trim();
+        if value.is_empty() {
+            return Ok(HermesCommandReport {
+                success: false,
+                output: "API key cannot be empty.".into(),
+                exit_code: 2,
+            });
+        }
+        if value.contains('\n') || value.contains('\r') {
+            return Ok(HermesCommandReport {
+                success: false,
+                output: "API key cannot contain newlines.".into(),
+                exit_code: 2,
+            });
+        }
+        let hermes_home = hermes_home_dir();
+        let env_file = hermes_home.join(".env");
+        tokio::fs::create_dir_all(&hermes_home)
+            .await
+            .map_err(|e| e.to_string())?;
+        let existing = tokio::fs::read_to_string(&env_file).await.unwrap_or_default();
+        let updated = upsert_env_value(&existing, key_name, value);
+            .await
+            .map_err(|e| e.to_string())?;
+
+        })
+    }
+
+    pub async fn hermes_test_chat(&self) -> Result<HermesCommandReport, String> {
+        run_hermes_capture(
+            &self.runner,
+            [
+                "chat",
+                "-q",
+                "Reply with exactly: SCRIPTRON_E2E_OK",
+                "--quiet",
+                "--source",
+                "scriptron",
+                "--accept-hooks",
+            ]
+            .into_iter(),
+            120,
+            None,
+        )
+        .await
+    }
+
     pub async fn hermes_skills_browse(&self) -> Result<Vec<HermesSkillCatalogItem>, String> {
         run_hermes_skill_catalog_command(&["skills", "browse", "--size", "100"]).await
     }
@@ -871,11 +1011,19 @@ impl ScriptronCore {
     }
 
     pub async fn get_auth_status(&self) -> Vec<ProviderStatus> {
+        let status = self.hermes_status().await.unwrap_or(HermesStatus {
+            installed: false,
+            running: false,
+            version: None,
+            diagnostic: Some("Could not check Hermes status".into()),
+        });
         vec![ProviderStatus {
             provider: "hermes".into(),
             display_name: "Hermes Agent".into(),
-            connected: false,
-            auth_method: "hermes_managed".into(),
+            connected: status.installed,
+            auth_method: status
+                .version
+                .unwrap_or_else(|| status.diagnostic.unwrap_or_else(|| "hermes_managed".into())),
             available_models: vec!["Hermes managed".into()],
             default_model: "Hermes managed".into(),
         }]
@@ -1009,29 +1157,38 @@ impl ScriptronCore {
         blackboard: Option<serde_json::Value>,
         tron_path: Option<String>,
     ) -> Result<HermesPromptSubmitResult, String> {
+        self.sync_hermes_workspace_bridge().await?;
         let mut blackboard = blackboard.unwrap_or_else(|| serde_json::json!({}));
         let log_path = run_log_path(tron_path.as_deref(), &project_path);
         let prompt_text = build_hermes_prompt_text(&cells, &project_path)?;
+        let output = run_hermes_capture(
+            &self.runner,
+            [
+                "chat",
+                "-q",
+                prompt_text.as_str(),
+                "--quiet",
+                "--source",
+                "scriptron",
+                "--accept-hooks",
+            ]
+            .into_iter(),
+            600,
+            Some(Path::new(&project_path)),
+        )
+        .await?;
+        if !output.success {
+            return Err(output.output);
+        }
+        let response = output.output.trim().to_string();
         let events = vec![
             ExecutionEvent::warning(format!(
                 "Hermes prompt submitted. Log file: {}",
                 log_path.display()
             )),
-            ExecutionEvent::text(prompt_text.clone()),
+            ExecutionEvent::text(response.clone()),
             ExecutionEvent::complete(),
         ];
-        let response = events
-            .iter()
-            .filter_map(|event| match event {
-                ExecutionEvent {
-                    event_type,
-                    content: Some(content),
-                    ..
-                } if event_type == "text" => Some(content.as_str()),
-                _ => None,
-            })
-            .collect::<Vec<_>>()
-            .join("\n\n");
         update_blackboard_notes(
             &mut blackboard,
             &response,
@@ -1047,6 +1204,25 @@ impl ScriptronCore {
             blackboard,
             log_path: log_path.to_string_lossy().into_owned(),
         })
+    }
+
+    pub async fn sync_hermes_workspace_bridge(&self) -> Result<(), String> {
+        self.export_scriptron_workspace_hermes_skill()
+            .await
+            .map_err(|e| e.to_string())
+    }
+
+    async fn export_scriptron_workspace_hermes_skill(&self) -> anyhow::Result<()> {
+        let tools = self.registry.read().await.list_tools().to_vec();
+        let skills = list_installed_skills(&self.workspace_dir).await?;
+        let skill_dir = hermes_home_dir().join("skills").join("scriptron-workspace");
+        tokio::fs::create_dir_all(&skill_dir).await?;
+        tokio::fs::write(
+            skill_dir.join("SKILL.md"),
+            render_scriptron_workspace_skill(&self.workspace_dir, &tools, &skills),
+        )
+        .await?;
+        Ok(())
     }
 
     pub async fn get_memory_snapshot(
@@ -1274,7 +1450,158 @@ impl ScriptronCore {
 }
 
 fn hermes_binary() -> String {
-    std::env::var("SCRIPTRON_HERMES_BIN").unwrap_or_else(|_| "hermes".into())
+    std::env::var("SCRIPTRON_HERMES_BIN").unwrap_or_else(|_| resolve_cli_binary("hermes"))
+}
+
+fn resolve_cli_binary(name: &str) -> String {
+    let path = Path::new(name);
+    if path.is_absolute() || name.contains('/') {
+        return name.into();
+    }
+
+    if let Some(path) = std::env::var_os("PATH").and_then(|paths| {
+        std::env::split_paths(&paths)
+            .map(|dir| dir.join(name))
+            .find(|candidate| candidate.is_file())
+    }) {
+        return path.to_string_lossy().into_owned();
+    }
+
+    let mut candidates = Vec::new();
+    if let Ok(home) = std::env::var("HOME") {
+        let home = PathBuf::from(home);
+        candidates.push(home.join(".local").join("bin").join(name));
+    }
+    candidates.extend(
+        [
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+        ]
+        .into_iter()
+        .map(|dir| Path::new(dir).join(name)),
+    );
+
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+        .map(|path| path.to_string_lossy().into_owned())
+        .unwrap_or_else(|| name.into())
+}
+
+fn hermes_home_dir() -> PathBuf {
+    std::env::var("HERMES_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            std::env::var("HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(".hermes")
+        })
+}
+
+fn hermes_api_key_name(provider: &str) -> Result<&'static str, String> {
+    match provider.trim().to_ascii_lowercase().as_str() {
+        "openai" | "api" => Ok("OPENAI_API_KEY"),
+        "openrouter" | "open-router" => Ok("OPENROUTER_API_KEY"),
+        "anthropic" | "claude" | "claude-code" => Ok("ANTHROPIC_API_KEY"),
+        other => Err(format!(
+            "Unsupported Hermes API key provider `{other}`. Use openai, openrouter, or anthropic."
+        )),
+    }
+}
+
+fn upsert_env_value(existing: &str, key: &str, value: &str) -> String {
+    let mut replaced = false;
+    let mut lines = existing
+        .lines()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            if !trimmed.starts_with('#')
+                && trimmed
+                    .strip_prefix(key)
+                    .and_then(|rest| rest.strip_prefix('='))
+                    .is_some()
+            {
+                replaced = true;
+                format!("{key}={value}")
+            } else {
+                line.to_string()
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if !replaced {
+        lines.push(format!("{key}={value}"));
+    }
+
+    let mut output = lines.join("\n");
+    output.push('\n');
+    output
+}
+
+fn render_scriptron_workspace_skill(
+    workspace_dir: &Path,
+    tools: &[ToolManifest],
+    skills: &[SkillEntry],
+) -> String {
+    let mut out = vec![
+        "# ScripTron Workspace Tools".to_string(),
+        String::new(),
+        "Use this skill when the user asks to run or inspect tools installed through ScripTron."
+            .to_string(),
+        format!("ScripTron workspace: `{}`", workspace_dir.display()),
+        String::new(),
+        "## Installed CLI and model tools".to_string(),
+    ];
+
+    if tools.is_empty() {
+        out.push("No ScripTron CLI tools are currently installed.".to_string());
+    } else {
+        for tool in tools {
+            out.push(format!("- `{}` ({:?})", tool.name, tool.kind));
+            out.push(format!("  - Description: {}", tool.description));
+            out.push(format!("  - Command: `{}`", tool.command));
+            if !tool.args_schema.is_empty() {
+                let args = tool
+                    .args_schema
+                    .iter()
+                    .map(|arg| {
+                        format!(
+                            "`{}`: {}{}",
+                            arg.name,
+                            arg.description,
+                            if arg.required { " (required)" } else { "" }
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                out.push(format!("  - Args: {args}"));
+            }
+            if !tool.examples.is_empty() {
+                out.push(format!("  - Examples: {}", tool.examples.join(" | ")));
+            }
+        }
+    }
+
+    out.push(String::new());
+    out.push("## Installed ScripTron workspace skills".to_string());
+    if skills.is_empty() {
+        out.push("No ScripTron workspace skills are currently installed.".to_string());
+    } else {
+        for skill in skills {
+            out.push(format!("- `{}`: {}", skill.name, skill.description));
+            out.push(format!("  - Path: `{}`", skill.path));
+        }
+    }
+
+    out.push(String::new());
+    out.push("When invoking a ScripTron CLI, prefer the exact command path listed above and run it from the relevant project directory.".to_string());
+    out.push(String::new());
+    out.join("\n")
 }
 
 async fn run_hermes_skill_catalog_command(
@@ -1296,9 +1623,118 @@ async fn run_hermes_skill_catalog_command(
         if item.install_ref.is_none() {
             item.install_ref = Some(item.name.clone());
         }
+        enrich_hermes_skill_catalog_item(item);
     }
     items.sort_by(|a, b| a.name.cmp(&b.name));
     Ok(items)
+}
+
+async fn run_hermes_capture<'a>(
+    runner: &ProcessRunner,
+    args: impl IntoIterator<Item = &'a str>,
+    timeout_secs: u64,
+    working_dir: Option<&Path>,
+) -> Result<HermesCommandReport, String> {
+    let mut config = ProcessConfig::new(hermes_binary(), args)
+        .with_timeout(timeout_secs)
+        .with_env("HERMES_ACCEPT_HOOKS", "1");
+    if let Some(working_dir) = working_dir {
+        config = config.with_working_dir(working_dir);
+    }
+    let result = runner.run(config).await.map_err(|e| e.to_string())?;
+    Ok(HermesCommandReport {
+        success: result.success(),
+        output: result.combined_output().trim().to_string(),
+        exit_code: result.exit_code,
+    })
+}
+
+async fn run_local_command<'a>(
+    runner: &ProcessRunner,
+    command: &str,
+    args: impl IntoIterator<Item = &'a str>,
+    timeout_secs: u64,
+) -> HermesCommandReport {
+    match runner
+        .run(ProcessConfig::new(resolve_cli_binary(command), args).with_timeout(timeout_secs))
+        .await
+    {
+        Ok(result) => HermesCommandReport {
+            success: result.success(),
+            output: result.combined_output().trim().to_string(),
+            exit_code: result.exit_code,
+        },
+        Err(error) => HermesCommandReport {
+            success: false,
+            output: error.to_string(),
+            exit_code: -1,
+        },
+    }
+}
+
+fn api_key_report<'a>(keys: impl IntoIterator<Item = &'a str>) -> String {
+    let env_file = hermes_home_dir().join(".env");
+    let env_contents = std::fs::read_to_string(env_file).unwrap_or_default();
+    keys.into_iter()
+        .map(|key| {
+            let set = std::env::var(key)
+                .map(|value| !value.trim().is_empty())
+                .unwrap_or(false)
+                || env_contents.lines().any(|line| {
+                    let trimmed = line.trim();
+                    trimmed
+                        .strip_prefix(key)
+                        .and_then(|rest| rest.strip_prefix('='))
+                        .map(|value| !value.trim().is_empty())
+                        .unwrap_or(false)
+                });
+            format!("{key}: {}", if set { "set" } else { "not set" })
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn enrich_hermes_skill_catalog_item(item: &mut HermesSkillCatalogItem) {
+    if item.wraps_external_cli || looks_like_cli_wrapper(item) {
+        item.wraps_external_cli = true;
+        if item.icon.is_empty() || item.icon == default_hermes_icon() {
+            item.icon = "terminal".into();
+        }
+        push_tag(&mut item.tags, "cli");
+    } else if item.icon.is_empty() {
+        item.icon = default_hermes_icon();
+    }
+
+    if !item.trust_level.is_empty() {
+        let trust_tag = item.trust_level.to_ascii_lowercase();
+        push_tag(&mut item.tags, &trust_tag);
+    }
+    if !item.category.is_empty() {
+        let category_tag = item.category.to_ascii_lowercase().replace(' ', "-");
+        push_tag(&mut item.tags, &category_tag);
+    }
+}
+
+fn looks_like_cli_wrapper(item: &HermesSkillCatalogItem) -> bool {
+    let haystack = format!(
+        "{} {} {}",
+        item.name.to_ascii_lowercase(),
+        item.description.to_ascii_lowercase(),
+        item.category.to_ascii_lowercase()
+    );
+    haystack.contains("cli")
+        || haystack.contains("command line")
+        || haystack.contains("install and run")
+        || haystack.contains("claude-code")
+        || haystack.contains("codex")
+}
+
+fn push_tag(tags: &mut Vec<String>, tag: &str) {
+    let tag = tag.trim();
+    if tag.is_empty() || tags.iter().any(|existing| existing == tag) {
+        return;
+    }
+    tags.push(tag.to_string());
 }
 
 fn parse_hermes_skill_catalog_text(output: &str) -> Result<Vec<HermesSkillCatalogItem>, String> {
@@ -1327,17 +1763,20 @@ fn parse_hermes_skill_catalog_text(output: &str) -> Result<Vec<HermesSkillCatalo
             }
             (columns[1], columns[2], columns[3], columns[4], None)
         } else {
-            (columns[0], columns[1], columns[2], columns[3], columns.get(4).copied())
+            (
+                columns[0],
+                columns[1],
+                columns[2],
+                columns[3],
+                columns.get(4).copied(),
+            )
         };
 
         if name.is_empty() || name == "Name" || source.is_empty() {
             continue;
         }
 
-        let trust_level = trust
-            .trim_start_matches('★')
-            .trim()
-            .to_string();
+        let trust_level = trust.trim_start_matches('★').trim().to_string();
         items.push(HermesSkillCatalogItem {
             name: name.to_string(),
             description: description.to_string(),
@@ -1352,6 +1791,8 @@ fn parse_hermes_skill_catalog_text(output: &str) -> Result<Vec<HermesSkillCatalo
                     .to_string(),
             ),
             wraps_external_cli: false,
+            tags: Vec::new(),
+            icon: default_hermes_icon(),
         });
     }
 
@@ -1562,7 +2003,7 @@ async fn sync_tronhub_cache(workspace_dir: &Path, runner: &ProcessRunner) -> any
             "clone".to_string(),
             "--depth".to_string(),
             "1".to_string(),
-            "https://github.com/WyattZZZZ/ScripTron_Extension".to_string(),
+            tronhub_repo_url(),
             repo_dir.to_string_lossy().into_owned(),
         ]
     };
@@ -1575,6 +2016,22 @@ async fn sync_tronhub_cache(workspace_dir: &Path, runner: &ProcessRunner) -> any
         .await
         .map(|_| ())
         .map_err(|e| anyhow::anyhow!(e.to_string()))
+}
+
+fn tronhub_repo_url() -> String {
+    if let Ok(url) = env::var("SCRIPTRON_TRONHUB_REPO_URL") {
+        if !url.trim().is_empty() {
+            return url;
+        }
+    }
+    let source = "https://github.com/WyattZZZZ/ScripTron_Extension";
+    let prefix =
+        env::var("GITHUB_MIRROR_PREFIX").unwrap_or_else(|_| "https://gh-proxy.com/".into());
+    if prefix.trim().is_empty() {
+        source.into()
+    } else {
+        format!("{}{source}", prefix.trim())
+    }
 }
 
 async fn list_tronhub_entries(
@@ -2400,4 +2857,39 @@ Summarize the project goal and suggest the next concrete step.
 ---
 "#
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Mutex, OnceLock};
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn tronhub_repo_url_defaults_to_cn_github_mirror_and_allows_override() {
+        let _guard = env_lock().lock().expect("lock env");
+        env::remove_var("SCRIPTRON_TRONHUB_REPO_URL");
+        env::remove_var("GITHUB_MIRROR_PREFIX");
+
+        assert_eq!(
+            tronhub_repo_url(),
+            "https://gh-proxy.com/https://github.com/WyattZZZZ/ScripTron_Extension"
+        );
+
+        env::set_var("GITHUB_MIRROR_PREFIX", "");
+        assert_eq!(
+            tronhub_repo_url(),
+            "https://github.com/WyattZZZZ/ScripTron_Extension"
+        );
+
+        env::set_var(
+            "SCRIPTRON_TRONHUB_REPO_URL",
+            "https://mirror.example/scriptron.git",
+        );
+        assert_eq!(tronhub_repo_url(), "https://mirror.example/scriptron.git");
+    }
 }

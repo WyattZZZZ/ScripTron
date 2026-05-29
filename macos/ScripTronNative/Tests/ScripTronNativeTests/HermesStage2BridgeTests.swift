@@ -60,6 +60,61 @@ final class HermesStage2BridgeTests: XCTestCase {
         XCTAssertFalse(bridge.voidCalls.contains { $0.method == "install_tronhub" })
     }
 
+    func testCliMarketIncludesHermesOfficialCliWrapperSkillsFromBridge() throws {
+        let bridge = DummyScripTronBridge()
+        stubWorkspaceManagementBasics(on: bridge)
+        bridge.stub("hermes_skills_browse", json: #"""
+        [
+          {
+            "name": "claude-code",
+            "description": "Delegate coding tasks to Claude Code CLI.",
+            "source": "Hermes Official / Hub",
+            "category": "Autonomous AI Agents",
+            "trust_level": "official",
+            "installed": false,
+            "install_ref": "official/autonomous-ai-agents/claude-code",
+            "wraps_external_cli": true,
+            "tags": ["official", "cli", "coding"],
+            "icon": "terminal"
+          },
+          {
+            "name": "github-issues",
+            "description": "Work with GitHub issues through Hermes.",
+            "source": "Hermes Official / Hub",
+            "category": "GitHub",
+            "trust_level": "official",
+            "installed": false,
+            "install_ref": "official/github/github-issues",
+            "wraps_external_cli": false,
+            "tags": ["official", "github"],
+            "icon": "sparkles"
+          }
+        ]
+        """#)
+
+        let model = AppModel(bridge: bridge)
+        model.loadWorkspaceManagementData()
+
+        XCTAssertEqual(model.cliMarketCatalogItems.map(\.name), ["claude-code"])
+        XCTAssertEqual(model.cliMarketCatalogItems.first?.kind, .cli)
+        XCTAssertEqual(model.cliMarketCatalogItems.first?.tags, ["official", "cli", "coding"])
+        XCTAssertEqual(model.cliMarketCatalogItems.first?.icon, "terminal")
+    }
+
+    func testMarketsFallbackToBundledOfficialCatalogWhenHermesBrowseFails() throws {
+        let bridge = DummyScripTronBridge()
+        stubWorkspaceManagementBasics(on: bridge)
+
+        let model = AppModel(bridge: bridge)
+        model.loadWorkspaceManagementData(reportErrors: false)
+
+        XCTAssertFalse(model.skillMarketCatalogItems.isEmpty)
+        XCTAssertFalse(model.cliMarketCatalogItems.isEmpty)
+        XCTAssertTrue(model.skillMarketCatalogItems.allSatisfy { $0.source == .hermesHub })
+        XCTAssertTrue(model.cliMarketCatalogItems.allSatisfy { $0.source == .hermesHub && $0.wrapsExternalCLI })
+        XCTAssertNil(model.errorMessage)
+    }
+
     private func stubWorkspaceManagementBasics(on bridge: DummyScripTronBridge) {
         bridge.stub("list_tools", json: #"[]"#)
         bridge.stub("get_active_config", json: #"{"provider":"hermes","model":"Hermes Dummy"}"#)

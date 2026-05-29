@@ -2,6 +2,7 @@ import XCTest
 @testable import ScripTronNative
 
 final class RustSwiftIntegrationTests: XCTestCase {
+    @MainActor
     func testRustBridgeCallsRustFfiAndFakeHermesOfficialSkillRepository() throws {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent()
@@ -30,8 +31,16 @@ final class RustSwiftIntegrationTests: XCTestCase {
         XCTAssertEqual(status.version, "hermes 0.0.0-fake")
 
         let browsed = try bridge.call("hermes_skills_browse", as: [HermesSkillCatalogEntry].self)
-        XCTAssertEqual(browsed.map(\.name), ["github-pr-review", "research-brief"])
+        XCTAssertEqual(browsed.map(\.name), ["claude-code", "github-pr-review", "research-brief"])
         XCTAssertEqual(browsed.first?.source, "Hermes Official / Hub")
+        XCTAssertEqual(browsed.first?.tags, ["official", "cli", "coding"])
+        XCTAssertEqual(browsed.first?.icon, "terminal")
+
+        let model = AppModel(bridge: bridge)
+        model.boot()
+        XCTAssertFalse(model.skillMarketCatalogItems.isEmpty)
+        XCTAssertFalse(model.cliMarketCatalogItems.isEmpty)
+        XCTAssertNil(model.errorMessage)
 
         let searched = try bridge.call(
             "hermes_skills_search",
